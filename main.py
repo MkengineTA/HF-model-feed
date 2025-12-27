@@ -24,7 +24,16 @@ def main():
     # 1. Initialize Components
     db = Database(config.DB_PATH)
     hf_client = HFClient(token=config.HF_TOKEN)
-    llm_client = LLMClient(api_url=config.LLM_API_URL, model=config.LLM_MODEL)
+
+    # Initialize LLM with OpenRouter support config
+    llm_client = LLMClient(
+        api_url=config.LLM_API_URL,
+        model=config.LLM_MODEL,
+        api_key=config.LLM_API_KEY,
+        site_url=config.OR_SITE_URL,
+        app_name=config.OR_APP_NAME
+    )
+
     reporter = Reporter()
 
     # 2. Fetch Models from Multiple Sources

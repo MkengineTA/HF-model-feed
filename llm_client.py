@@ -24,13 +24,16 @@ def extract_json_from_text(text):
         return None
 
 class LLMClient:
-    def __init__(self, api_url, model):
+    def __init__(self, api_url, model, api_key=None, site_url=None, app_name=None):
         self.api_url = api_url
         self.model = model
+        self.api_key = api_key
+        self.site_url = site_url
+        self.app_name = app_name
 
     def analyze_model(self, readme_content, tags):
         """
-        Analyzes the model README and tags using the local LLM.
+        Analyzes the model README and tags using the LLM.
         Returns a dictionary with the analysis results.
         """
 
@@ -68,8 +71,22 @@ class LLMClient:
             "stream": False
         }
 
+        # Build Headers
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # OpenRouter Specific Headers
+        if self.site_url:
+            headers["HTTP-Referer"] = self.site_url
+        if self.app_name:
+            headers["X-Title"] = self.app_name
+
         try:
-            response = requests.post(self.api_url, json=payload, timeout=120)
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
             response.raise_for_status()
 
             result = response.json()
@@ -84,6 +101,9 @@ class LLMClient:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"LLM Request failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response text: {e.response.text}")
             return None
         except Exception as e:
             logger.error(f"Error during LLM analysis: {e}")
