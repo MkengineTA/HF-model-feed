@@ -27,31 +27,61 @@ def main():
     llm_client = LLMClient(api_url=config.LLM_API_URL, model=config.LLM_MODEL)
     reporter = Reporter()
 
-    # 2. Fetch Models
-    logger.info(f"Fetching last {args.limit} models from Hugging Face...")
-    recent_models = hf_client.fetch_new_models(limit=args.limit)
-    logger.info(f"Fetched {len(recent_models)} models.")
+    # 2. Fetch Models from Multiple Sources
+    logger.info("Fetching new models...")
 
-    # 3. Deduplication
+    # Source A: Newest
+    recent_models = hf_client.fetch_new_models(limit=args.limit)
+    logger.info(f"Fetched {len(recent_models)} recent models.")
+
+    # Source B: Trending
+    trending_ids = hf_client.fetch_trending_models(limit=10)
+    logger.info(f"Fetched {len(trending_ids)} trending models.")
+
+    # Source C: Daily Papers
+    paper_model_ids = hf_client.fetch_daily_papers(limit=20)
+    logger.info(f"Fetched {len(paper_model_ids)} models from daily papers.")
+
+    # 3. Combine and Deduplicate
     existing_ids = db.get_existing_ids()
-    new_models_candidates = [m for m in recent_models if m.id not in existing_ids]
-    logger.info(f"New candidates after deduplication: {len(new_models_candidates)}")
+
+    # Convert recent_models to a dictionary for easy access, keyed by ID
+    candidates = {m.id: m for m in recent_models}
+
+    # Add trending and paper models (need to fetch info if not already in recent)
+    extra_ids = set(trending_ids + paper_model_ids)
+    for mid in extra_ids:
+        if mid not in candidates:
+            # We need to fetch info for these
+            info = hf_client.get_model_info(mid)
+            if info:
+                candidates[mid] = info
+
+    # Deduplicate against DB
+    new_model_ids = [mid for mid in candidates.keys() if mid not in existing_ids]
+    logger.info(f"New candidates after deduplication: {len(new_model_ids)}")
 
     processed_models = []
 
-    for model_info in new_models_candidates:
-        model_id = model_info.id
+    for model_id in new_model_ids:
         logger.info(f"Processing {model_id}...")
+        model_info = candidates[model_id]
+
+        # --- Phase 0: Security & Deep Metadata ---
+        # Fetch file details for Security Check and Param Estimation
+        file_details = hf_client.get_model_file_details(model_id)
+
+        # Security Check
+        if not filters.is_secure(file_details):
+             logger.warning(f"Skipping {model_id}: Security check failed (Unsafe/Malware detected)")
+             continue
 
         # --- Phase 1: Static Filters ---
 
         # Parameter Count
-        params_est = filters.extract_parameter_count(model_info)
-        # If params_est is None, we assume it's okay/small enough to check or we default to keep?
-        # Safe strategy: If we can't determine, we keep it for now (or maybe check later).
-        # But specification says: "Modelle mit >10B Parametern ausschließen."
+        params_est = filters.extract_parameter_count(model_info, file_details)
         if params_est and params_est > config.MAX_PARAMS_BILLIONS:
-            logger.info(f"Skipping {model_id}: Too large ({params_est}B)")
+            logger.info(f"Skipping {model_id}: Too large ({params_est:.2f}B)")
             continue
 
         # Quantization
@@ -86,8 +116,6 @@ def main():
             logger.info(f"Analyzing {model_id} with LLM...")
             llm_result = llm_client.analyze_model(readme_content, model_info.tags)
             if not llm_result:
-                # If LLM fails, we log error but maybe don't save or save as error?
-                # Spec: "Bei Absturz des lokalen LLM ... wird der Datenbank-Eintrag ... nicht erstellt oder auf error gesetzt"
                 logger.error(f"LLM analysis failed for {model_id}")
                 final_status = 'error'
             else:
@@ -104,14 +132,6 @@ def main():
             'llm_analysis': llm_result,
             'status': final_status
         }
-
-        # Don't save errors to DB so they are retried next time (as they won't be in existing_ids)
-        # OR save as 'error' and handle retry logic?
-        # Spec says: "nicht erstellt oder auf error gesetzt, damit es im nächsten Nachtlauf erneut geprüft wird."
-        # If we save as 'error', next run `get_existing_ids` includes it, so we filter it out.
-        # So we should NOT save it if we want retry, OR we update `get_existing_ids` to exclude 'error' status.
-        # Let's adjust `get_existing_ids` in DB or just not save here.
-        # Simpler: Don't save if status is error.
 
         if final_status != 'error':
             processed_models.append(model_data)
