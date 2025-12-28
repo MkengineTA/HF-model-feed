@@ -11,6 +11,7 @@ from database import Database
 from hf_client import HFClient
 from llm_client import LLMClient
 from reporter import Reporter
+from mailer import Mailer
 import filters
 
 # Setup logging
@@ -24,6 +25,7 @@ def main():
 
     # Capture start time to save as last_run later
     current_run_time = datetime.now(timezone.utc)
+    date_str = current_run_time.strftime("%Y-%m-%d")
 
     # 1. Initialize Components
     db = Database(config.DB_PATH)
@@ -40,6 +42,7 @@ def main():
     )
 
     reporter = Reporter()
+    mailer = Mailer()
 
     # Get Last Run Timestamp
     last_run_ts = db.get_last_run_timestamp()
@@ -202,13 +205,23 @@ def main():
     # 4. Generate Output
     if processed_models:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")
-        md_path = reporter.generate_markdown_report(processed_models)
+        md_path = reporter.generate_markdown_report(processed_models, date_str=date_str)
         reporter.export_csv(processed_models)
         logger.info(f"Report generated: {md_path}")
+
+        # 5. Send Email
+        # Read the generated markdown content to convert to HTML for email
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+            mailer.send_report(md_content, date_str)
+        except Exception as e:
+            logger.error(f"Failed to read report for email dispatch: {e}")
+
     else:
         logger.info("No new models processed.")
 
-    # 5. Update State
+    # 6. Update State
     if not args.dry_run:
         db.set_last_run_timestamp(current_run_time)
         logger.info(f"Updated last run timestamp to {current_run_time}")

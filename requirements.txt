@@ -3,3 +3,4 @@ requests
 python-dotenv
 pytest
 python-dateutil
+markdown2

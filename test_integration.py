@@ -17,9 +17,11 @@ class TestIntegration(unittest.TestCase):
     @patch('main.HFClient')
     @patch('main.LLMClient')
     @patch('main.Reporter')
+    @patch('main.Mailer')
     @patch('filters.extract_parameter_count')
     @patch('filters.is_secure')
-    def test_full_flow(self, mock_is_secure, mock_extract_params, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
+    @patch('builtins.open', new_callable=mock_open, read_data="# Report Content")
+    def test_full_flow(self, mock_file, mock_is_secure, mock_extract_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
         # Setup Mocks
 
         # Database
@@ -113,6 +115,9 @@ class TestIntegration(unittest.TestCase):
 
         # 3. Check State Update
         mock_db_instance.set_last_run_timestamp.assert_called()
+
+        # 4. Check Mailer
+        MockMailer.return_value.send_report.assert_called()
 
 if __name__ == '__main__':
     unittest.main()

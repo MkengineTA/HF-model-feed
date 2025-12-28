@@ -17,5 +17,10 @@ OR_APP_NAME = os.getenv("OR_APP_NAME", "Edge AI Scout")
 
 DB_PATH = os.getenv("DB_PATH", "models.db")
 
+# Email Configuration
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASS = os.getenv("SMTP_PASS")
+RECEIVER_MAIL = os.getenv("RECEIVER_MAIL")
+
 # Parameter thresholds
 MAX_PARAMS_BILLIONS = 10.0
