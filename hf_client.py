@@ -45,6 +45,27 @@ class HFClient:
             logger.error(f"Error fetching updated models from HF: {e}")
             return []
 
+    def fetch_trending_models(self, limit=10):
+        """
+        Fetches trending models.
+        """
+        try:
+            url = f"{self.base_url}/trending"
+            params = {"type": "model", "limit": limit}
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            models = []
+            for item in data.get("recentlyTrending", []):
+                repo_data = item.get("repoData", {})
+                if repo_data:
+                     models.append(repo_data.get("id"))
+            return models
+        except Exception as e:
+            logger.error(f"Error fetching trending models: {e}")
+            return []
+
     def fetch_daily_papers(self, limit=20):
         """
         Fetches daily papers and extracts potential model IDs.
