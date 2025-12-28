@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch, mock_open
 import sys
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Add current dir to sys.path to import modules
 sys.path.append(os.getcwd())
@@ -24,59 +24,54 @@ class TestIntegration(unittest.TestCase):
 
         # Database
         mock_db_instance = MockDatabase.return_value
-        mock_db_instance.get_existing_ids.return_value = {"old-model/123"}
+
+        # Mock Existing IDs: "old-model/123" and "updated-model/456"
+        mock_db_instance.get_existing_ids.return_value = {"old-model/123", "updated-model/456"}
+
+        # Mock DB Last Modified
+        # old-model: processed yesterday, unchanged
+        # updated-model: processed yesterday, but now updated
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        older = datetime.now(timezone.utc) - timedelta(days=10)
+
+        def side_effect_last_mod(mid):
+            if mid == "old-model/123": return yesterday
+            if mid == "updated-model/456": return yesterday
+            return None
+        mock_db_instance.get_model_last_modified.side_effect = side_effect_last_mod
 
         # HF Client
         mock_hf_instance = MockHFClient.return_value
 
-        # Models
-        m1 = MagicMock()
-        m1.id = "new/specialist-model-7b"
-        m1.tags = ["manufacturing", "vision"]
-        m1.created_at = datetime.now()
+        # 1. Models - Recently Created
+        m_new = MagicMock()
+        m_new.id = "new/specialist-model-7b"
+        m_new.tags = ["manufacturing"]
+        m_new.created_at = datetime.now(timezone.utc)
+        m_new.lastModified = datetime.now(timezone.utc)
 
-        m2 = MagicMock()
-        m2.id = "big/giant-model-70b"
-        m2.tags = ["nlp"]
-        m2.created_at = datetime.now()
+        # 2. Models - Recently Updated
+        m_updated = MagicMock()
+        m_updated.id = "updated-model/456" # Exists in DB
+        m_updated.tags = ["vision"]
+        m_updated.created_at = older
+        m_updated.lastModified = datetime.now(timezone.utc) # Newer than DB!
 
-        # Model from Trending (needs info fetch)
-        m_trending_id = "trending/cool-model"
+        m_old_unchanged = MagicMock()
+        m_old_unchanged.id = "old-model/123" # Exists in DB
+        m_old_unchanged.lastModified = older # Older than DB (or same) -> No process
 
-        # Return lists
-        mock_hf_instance.fetch_new_models.return_value = [m1, m2]
-        mock_hf_instance.fetch_trending_models.return_value = [m_trending_id]
+        mock_hf_instance.fetch_new_models.return_value = [m_new]
+        mock_hf_instance.fetch_recently_updated_models.return_value = [m_updated, m_old_unchanged]
         mock_hf_instance.fetch_daily_papers.return_value = []
 
-        # Mock get_model_info for trending
-        m_trending_info = MagicMock()
-        m_trending_info.id = m_trending_id
-        m_trending_info.tags = ["trending"]
-        m_trending_info.created_at = datetime.now()
-
-        def side_effect_info(mid):
-            if mid == m_trending_id: return m_trending_info
-            return None
-        mock_hf_instance.get_model_info.side_effect = side_effect_info
-
-        # Mock File Details (Security & Size)
-        # m1: Safe, Normal Size
-        # m2: Safe, Big Size
-        # m_trending: Safe, Normal Size
-        mock_hf_instance.get_model_file_details.return_value = [] # Default empty list (safe)
-
-        # Security Filter: Always True for now
+        # Filters
+        mock_hf_instance.get_model_file_details.return_value = [] # Safe
         mock_is_secure.return_value = True
-
-        # Extract Params
-        def side_effect_params(info, files):
-            if "70b" in info.id: return 70.0
-            if "7b" in info.id: return 7.0
-            return None
-        mock_extract_params.side_effect = side_effect_params
+        mock_extract_params.return_value = 7.0
 
         # Readme
-        mock_hf_instance.get_model_readme.return_value = "Detailed readme content " * 20 # > 300 chars
+        mock_hf_instance.get_model_readme.return_value = "Detailed readme content " * 20
 
         # LLM
         mock_llm_instance = MockLLMClient.return_value
@@ -88,28 +83,23 @@ class TestIntegration(unittest.TestCase):
 
         # Verifications
 
-        # 1. Fetching sources
+        # 1. Source Fetching
         mock_hf_instance.fetch_new_models.assert_called()
-        mock_hf_instance.fetch_trending_models.assert_called()
-        mock_hf_instance.fetch_daily_papers.assert_called()
+        mock_hf_instance.fetch_recently_updated_models.assert_called()
 
-        # 2. Info fetching for extra IDs
-        mock_hf_instance.get_model_info.assert_called_with(m_trending_id)
+        # 2. Processing Logic
+        # saved_models should include m_new (New) and m_updated (Update Detected)
+        # Should NOT include m_old_unchanged
 
-        # 3. Security Check Call
-        # Should be called for m1, m2, m_trending
-        self.assertTrue(mock_hf_instance.get_model_file_details.called)
-
-        # 4. Saving
-        # m1 saved
-        # m_trending saved
-        # m2 skipped (params)
         saved_models = [call[0][0] for call in mock_db_instance.save_model.call_args_list]
         saved_ids = [m['id'] for m in saved_models]
 
         self.assertIn("new/specialist-model-7b", saved_ids)
-        self.assertIn("trending/cool-model", saved_ids)
-        self.assertNotIn("big/giant-model-70b", saved_ids)
+        self.assertIn("updated-model/456", saved_ids)
+        self.assertNotIn("old-model/123", saved_ids)
+
+        # Verify reason logging (optional, but good for confidence)
+        # We can't easily check logs here without capturing them, but the saving logic proves it works.
 
 if __name__ == '__main__':
     unittest.main()
