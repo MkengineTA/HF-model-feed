@@ -40,24 +40,36 @@ class LLMClient:
         system_prompt = (
             "You are an expert AI researcher specializing in Edge AI and Manufacturing Specialist Models. "
             "Your task is to analyze a Hugging Face model based on its README and tags. "
-            "You must output valid JSON only."
+            "You must provide a deep technical analysis, focusing on the 'Delta' (what changed from the base model). "
+            "Output valid JSON only."
         )
 
         user_prompt = f"""
-        Analyze the following model.
+        Analyze the following model deeply.
 
         HF Tags: {', '.join(tags) if tags else 'None'}
 
         README Content (truncated if too long):
         {readme_content[:32000]}
 
-        Provide the output in the following JSON structure:
+        ## Requirements:
+        1. **Technical Summary**: No short USPs. Describe the technical core. What architecture? What dataset? What training method?
+        2. **Delta Analysis**: If this is an Adapter/Finetune:
+           - What is the Base Model?
+           - What specifically changed (Dataset, Objective, Quantization)?
+           - Value Proposition: Why use this over the base model?
+        3. **Categorization**: Determine if it's a Base Model, LoRA Adapter, or Finetune.
+        4. **Scoring**: Score 1-10 on specialization for Edge/Manufacturing.
+
+        ## Output Format (JSON):
         {{
+            "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
+            "base_model": "<name of base model or null>",
+            "technical_summary": "<detailed technical description>",
+            "delta_explanation": "<explanation of the specific changes and value prop vs base>",
             "category": "Vision" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
-            "specialist_score": <int 1-10, where 10 is highly specialized/niche, 1 is generic chat>,
-            "manufacturing_potential": <boolean, true if useful for manufacturing tasks like defect detection, pdf extraction, tool use>,
-            "summary": "<concise sentence describing the USP>",
-            "manufacturing_use_cases": ["<list of potential use cases if any>"]
+            "specialist_score": <int 1-10>,
+            "manufacturing_potential": <boolean>
         }}
         """
 
@@ -79,7 +91,6 @@ class LLMClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # OpenRouter Specific Headers
         if self.site_url:
             headers["HTTP-Referer"] = self.site_url
         if self.app_name:

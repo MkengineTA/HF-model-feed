@@ -48,7 +48,11 @@ def main():
     updated_models = hf_client.fetch_recently_updated_models(limit=args.limit)
     logger.info(f"Fetched {len(updated_models)} recently updated models.")
 
-    # Source C: Daily Papers (Science)
+    # Source C: Trending
+    trending_ids = hf_client.fetch_trending_models(limit=10) # Limit default to 10 for trending
+    logger.info(f"Fetched {len(trending_ids)} trending models.")
+
+    # Source D: Daily Papers (Science)
     paper_model_ids = hf_client.fetch_daily_papers(limit=20)
     logger.info(f"Fetched {len(paper_model_ids)} models from daily papers.")
 
@@ -66,12 +70,13 @@ def main():
     for m in recent_models: add_candidate(m, 'created')
     for m in updated_models: add_candidate(m, 'updated')
 
-    # For paper models, we need to fetch info
-    for mid in paper_model_ids:
+    # For trending & paper models, we need to fetch info
+    extra_ids = set(trending_ids + paper_model_ids)
+    for mid in extra_ids:
         if mid not in candidates:
             info = hf_client.get_model_info(mid)
             if info:
-                add_candidate(info, 'paper')
+                add_candidate(info, 'trending_or_paper')
 
     logger.info(f"Total unique candidates found: {len(candidates)}")
 
@@ -105,8 +110,6 @@ def main():
                         reason = f"Update Detected (API: {api_last_mod_dt} > DB: {db_last_mod_dt})"
                 except Exception as e:
                     logger.warning(f"Date parsing error for {model_id}: {e}")
-                    # If unsure, maybe skip or process? Let's skip to avoid loops, or process to fix?
-                    # Safer to skip unless we are sure it's newer.
             elif not db_last_mod_str:
                 # If we have it in DB but no timestamp (migration case), maybe re-process once?
                 should_process = True
