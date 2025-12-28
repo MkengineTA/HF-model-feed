@@ -24,12 +24,13 @@ def extract_json_from_text(text):
         return None
 
 class LLMClient:
-    def __init__(self, api_url, model, api_key=None, site_url=None, app_name=None):
+    def __init__(self, api_url, model, api_key=None, site_url=None, app_name=None, enable_reasoning=False):
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
         self.site_url = site_url
         self.app_name = app_name
+        self.enable_reasoning = enable_reasoning
 
     def analyze_model(self, readme_content, tags):
         """
@@ -82,6 +83,10 @@ class LLMClient:
             "temperature": 0.2,
             "stream": False
         }
+
+        if self.enable_reasoning:
+            # Add OpenRouter specific "reasoning" block
+            payload["reasoning"] = {"enabled": True}
 
         # Build Headers
         headers = {

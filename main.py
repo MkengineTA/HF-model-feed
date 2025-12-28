@@ -32,7 +32,8 @@ def main():
         model=config.LLM_MODEL,
         api_key=config.LLM_API_KEY,
         site_url=config.OR_SITE_URL,
-        app_name=config.OR_APP_NAME
+        app_name=config.OR_APP_NAME,
+        enable_reasoning=config.LLM_ENABLE_REASONING
     )
 
     reporter = Reporter()
