@@ -17,7 +17,7 @@ class HFClient:
         """
         try:
             models = self.api.list_models(
-                sort="created",
+                sort="createdAt",
                 direction="-1",
                 limit=limit,
                 full=False, # We don't need full info yet, but tags are useful
