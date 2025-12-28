@@ -22,7 +22,7 @@ Bevor ein Modell teuer analysiert wird, durchläuft es strenge Filter:
 ### 3. LLM Agent Workflow
 Der Kern des Scouts ist ein intelligenter LLM-Agent.
 **Workflow:**
-1.  **Input**: Das komplette README (bis 32k Kontext) + HF Tags.
+1.  **Input**: Das komplette README (bis 32k Zeichen) + HF Tags.
 2.  **Prompting**: Der Agent erhält eine spezifische Persona ("Expert AI Researcher") und Instruktionen zur technischen Tiefe.
 3.  **Analyse-Schritte**:
     *   **Identifikation**: Ist es ein Base Model, Adapter (LoRA) oder Finetune?
@@ -37,16 +37,66 @@ Der Kern des Scouts ist ein intelligenter LLM-Agent.
 
 ---
 
+## 🧠 LLM Anforderungen & Auswahl
+
+Damit der Scout zuverlässig funktioniert, muss das gewählte LLM bestimmte technische Anforderungen erfüllen.
+
+### 1. Context Window (Kontext-Fenster)
+*   **Empfehlung:** **Mindestens 16k Tokens** (besser 32k).
+*   **Grund:** Der Scout sendet bis zu **32.000 Zeichen** (ca. 8k - 10k Tokens) reinen README-Text plus System-Prompts. Ein Modell mit nur 4k oder 8k Kontext würde hier abschneiden oder halluzinieren.
+*   **Einstellung bei `llama-server`**: Nutzen Sie den Parameter `-c 16384` oder höher.
+
+### 2. Fähigkeiten (Capabilities)
+*   **JSON Output (Kritisch):** Das Modell **muss** zuverlässig valides JSON generieren können. Der Scout nutzt Prompt-Engineering, um JSON zu erzwingen. Modelle, die dazu neigen, "Hier ist dein JSON:" davor zu schreiben (Chat-Fluff), sind weniger geeignet (obwohl der Code versucht, dies zu parsen).
+*   **Reasoning (Wichtig):** Für die **Delta-Analyse** muss das Modell verstehen, *warum* ein Finetune existiert. Es muss technische Details aus langen Texten extrahieren und abstrahieren.
+*   **Tool Calling:** Wird **nicht** benötigt. Der Scout nutzt Standard-Completion mit JSON-Schema im Prompt.
+
+### 3. Modell-Empfehlungen
+*   **Cloud (OpenRouter):**
+    *   `qwen/qwen-2.5-72b-instruct` (Hervorragend für JSON & Coding Tasks, günstig).
+    *   `meta-llama/llama-3.1-70b-instruct` (Sehr starkes Reasoning, 128k Kontext).
+    *   `openai/gpt-4o-mini` (Schnell, günstig, sehr zuverlässiges JSON).
+*   **Lokal (Ollama / Llama.cpp):**
+    *   `llama3.1:8b-fp16` (Gutes Minimum, Kontext auf 16k setzen!).
+    *   `mistral-nemo:12b` (Sehr gut für technische Texte, großes Kontextfenster).
+    *   `qwen2.5:14b` (Aktueller Preis/Leistungs-Sieger für Structured Output).
+
+---
+
 ## 🛠 Installation & Konfiguration
 
-Siehe `INSTALL.md` (oder vorherige README Sektionen, hier gekürzt).
+### Setup
+
+1.  **Repository klonen**:
+    ```bash
+    git clone <repo-url>
+    cd <repo-folder>
+    ```
+
+2.  **Abhängigkeiten installieren**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **Konfiguration (.env)**:
+    Kopieren Sie die Vorlage und passen Sie sie an:
+    ```bash
+    cp .env.example .env
+    ```
 
 ### Konfiguration (.env)
 ```ini
 HF_TOKEN=...
+# Datenbank Pfad
+DB_PATH=models.db
+
+# LLM Konfiguration (Beispiel OpenRouter)
 LLM_API_URL=https://openrouter.ai/api/v1/chat/completions
-LLM_MODEL=openai/gpt-oss-120b:free
-LLM_API_KEY=...
+LLM_MODEL=qwen/qwen-2.5-72b-instruct
+LLM_API_KEY=sk-or-your-key-here
+# Optional: App Name für OpenRouter Statistiken
+OR_APP_NAME=Edge AI Scout
+OR_SITE_URL=https://github.com/IhrUser/EdgeAIScout
 ```
 
 ---
@@ -55,6 +105,15 @@ LLM_API_KEY=...
 
 ```bash
 python main.py --limit 100
+```
+
+### Parameter
+*   `--limit <n>`: Anzahl der Modelle pro Quelle (Standard: 100).
+*   `--dry-run`: Test-Modus (keine DB-Speicherung).
+
+### Automatisierung (Cronjob)
+```bash
+0 6 * * * cd /pfad/zu/edge-ai-scout && /pfad/zu/python main.py >> scout.log 2>&1
 ```
 
 ---
