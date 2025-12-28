@@ -1,7 +1,8 @@
 import sqlite3
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import dateutil.parser
 
 class Database:
     def __init__(self, db_path):
@@ -18,13 +19,6 @@ class Database:
     def init_db(self):
         conn = self.get_connection()
         cursor = conn.cursor()
-
-        # Added last_modified column
-        # Note: If DB exists, migration is needed. Since this is a dev environment/new tool,
-        # we can assume recreation or user deletes old db.
-        # To be safe for existing users (in this session), I'll add logic to check columns or just create if not exists.
-        # But for 'create if not exists', it won't add column if table exists.
-        # Let's try to add column via ALTER TABLE if it's missing (simple migration).
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS models (
@@ -47,12 +41,17 @@ class Database:
         if 'last_modified' not in columns:
             cursor.execute("ALTER TABLE models ADD COLUMN last_modified TIMESTAMP")
 
+        # Metadata table for app state (last_run)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+
         conn.commit()
 
     def get_existing_ids(self):
-        """
-        Returns a set of all model IDs in the database.
-        """
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM models")
@@ -60,25 +59,40 @@ class Database:
         return {row['id'] for row in rows}
 
     def get_model_last_modified(self, model_id):
-        """
-        Returns the last_modified timestamp for a model if it exists, else None.
-        """
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT last_modified FROM models WHERE id = ?", (model_id,))
         row = cursor.fetchone()
         if row and row['last_modified']:
-            # Return as string or datetime?
-            # Storing as text usually (SQLite default for TIMESTAMP often).
-            # Let's return the raw value, calling code can parse.
             return row['last_modified']
         return None
 
+    def get_last_run_timestamp(self):
+        """
+        Returns the last run timestamp.
+        If not set, returns 24 hours ago (default for first run).
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'last_run'")
+        row = cursor.fetchone()
+
+        if row and row['value']:
+            try:
+                return dateutil.parser.parse(row['value'])
+            except Exception:
+                pass
+
+        # Default: 24h ago
+        return datetime.now(timezone.utc) - timedelta(hours=24)
+
+    def set_last_run_timestamp(self, timestamp):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_run', ?)", (timestamp.isoformat(),))
+        conn.commit()
+
     def save_model(self, model_data):
-        """
-        model_data should be a dict matching the columns.
-        hf_tags and llm_analysis should be passed as dicts/lists and will be JSON serialized here.
-        """
         conn = self.get_connection()
         cursor = conn.cursor()
 

@@ -26,6 +26,10 @@ class TestIntegration(unittest.TestCase):
         mock_db_instance = MockDatabase.return_value
         mock_db_instance.get_existing_ids.return_value = {"old-model/123", "updated-model/456"}
 
+        # Last run 24h ago
+        last_run = datetime.now(timezone.utc) - timedelta(hours=24)
+        mock_db_instance.get_last_run_timestamp.return_value = last_run
+
         yesterday = datetime.now(timezone.utc) - timedelta(days=1)
         older = datetime.now(timezone.utc) - timedelta(days=10)
 
@@ -39,18 +43,21 @@ class TestIntegration(unittest.TestCase):
         mock_hf_instance = MockHFClient.return_value
 
         # 1. Models
+        # M1: Created just now (should be fetched)
         m_new = MagicMock()
         m_new.id = "new/specialist-model-7b"
         m_new.tags = ["manufacturing"]
         m_new.created_at = datetime.now(timezone.utc)
         m_new.lastModified = datetime.now(timezone.utc)
 
+        # M2: Updated just now (should be fetched)
         m_updated = MagicMock()
         m_updated.id = "updated-model/456"
         m_updated.tags = ["vision"]
         m_updated.created_at = older
         m_updated.lastModified = datetime.now(timezone.utc)
 
+        # M3: Trending (New Discovery)
         m_trending = MagicMock()
         m_trending.id = "trending/hot-model"
 
@@ -59,7 +66,7 @@ class TestIntegration(unittest.TestCase):
         m_trending_info.id = "trending/hot-model"
         m_trending_info.tags = ["hot"]
         m_trending_info.created_at = older
-        m_trending_info.lastModified = older # No update, but it's "New Discovery" as not in DB
+        m_trending_info.lastModified = older
 
         def side_effect_info(mid):
             if mid == "trending/hot-model": return m_trending_info
@@ -76,7 +83,7 @@ class TestIntegration(unittest.TestCase):
         mock_extract_params.return_value = 7.0
         mock_hf_instance.get_model_readme.return_value = "Detailed readme content " * 20
 
-        # LLM - New Structure
+        # LLM
         mock_llm_instance = MockLLMClient.return_value
         mock_llm_instance.analyze_model.return_value = {
             "model_type": "Finetune",
@@ -92,12 +99,20 @@ class TestIntegration(unittest.TestCase):
             main.main()
 
         # Verifications
+        # 1. Check fetch calls passed timestamp
+        mock_hf_instance.fetch_new_models.assert_called_with(since=last_run, limit=10)
+        mock_hf_instance.fetch_recently_updated_models.assert_called_with(since=last_run, limit=10)
+
+        # 2. Check saved models
         saved_models = [call[0][0] for call in mock_db_instance.save_model.call_args_list]
         saved_ids = [m['id'] for m in saved_models]
 
         self.assertIn("new/specialist-model-7b", saved_ids)
         self.assertIn("updated-model/456", saved_ids)
-        self.assertIn("trending/hot-model", saved_ids) # Should be processed as it was not in DB
+        self.assertIn("trending/hot-model", saved_ids)
+
+        # 3. Check State Update
+        mock_db_instance.set_last_run_timestamp.assert_called()
 
 if __name__ == '__main__':
     unittest.main()

@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import dateutil.parser
 
 import config
@@ -18,9 +18,12 @@ logger = setup_logging()
 
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
-    parser.add_argument("--limit", type=int, default=100, help="Limit for created/updated sources")
+    parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
     parser.add_argument("--dry-run", action="store_true", help="Do not save to DB")
     args = parser.parse_args()
+
+    # Capture start time to save as last_run later
+    current_run_time = datetime.now(timezone.utc)
 
     # 1. Initialize Components
     db = Database(config.DB_PATH)
@@ -38,22 +41,26 @@ def main():
 
     reporter = Reporter()
 
+    # Get Last Run Timestamp
+    last_run_ts = db.get_last_run_timestamp()
+    logger.info(f"Last successful run: {last_run_ts}")
+
     # 2. Fetch Models from Sources
-    logger.info("Fetching new models...")
+    logger.info("Fetching models...")
 
-    # Source A: Recently Created (Brand new)
-    recent_models = hf_client.fetch_new_models(limit=args.limit)
-    logger.info(f"Fetched {len(recent_models)} recently created models.")
+    # Source A: Recently Created (Brand new) - Fetch since last run
+    recent_models = hf_client.fetch_new_models(since=last_run_ts, limit=args.limit)
+    logger.info(f"Fetched {len(recent_models)} recently created models since last run.")
 
-    # Source B: Recently Updated (Existing but changed)
-    updated_models = hf_client.fetch_recently_updated_models(limit=args.limit)
-    logger.info(f"Fetched {len(updated_models)} recently updated models.")
+    # Source B: Recently Updated (Existing but changed) - Fetch since last run
+    updated_models = hf_client.fetch_recently_updated_models(since=last_run_ts, limit=args.limit)
+    logger.info(f"Fetched {len(updated_models)} recently updated models since last run.")
 
-    # Source C: Trending
-    trending_ids = hf_client.fetch_trending_models(limit=10) # Limit default to 10 for trending
+    # Source C: Trending (Fixed snapshot)
+    trending_ids = hf_client.fetch_trending_models(limit=10)
     logger.info(f"Fetched {len(trending_ids)} trending models.")
 
-    # Source D: Daily Papers (Science)
+    # Source D: Daily Papers (Science) (Daily snapshot)
     paper_model_ids = hf_client.fetch_daily_papers(limit=20)
     logger.info(f"Fetched {len(paper_model_ids)} models from daily papers.")
 
@@ -200,6 +207,11 @@ def main():
         logger.info(f"Report generated: {md_path}")
     else:
         logger.info("No new models processed.")
+
+    # 5. Update State
+    if not args.dry_run:
+        db.set_last_run_timestamp(current_run_time)
+        logger.info(f"Updated last run timestamp to {current_run_time}")
 
 if __name__ == "__main__":
     main()

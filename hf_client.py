@@ -2,6 +2,7 @@ from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 import logging
 import requests
+from datetime import datetime
 
 logger = logging.getLogger("EdgeAIScout")
 
@@ -11,36 +12,64 @@ class HFClient:
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.base_url = "https://huggingface.co/api"
 
-    def fetch_new_models(self, limit=100):
+    def fetch_new_models(self, since=None, limit=1000):
         """
-        Fetches the latest models from Hugging Face (Recently Created).
+        Fetches the latest models (Created).
+        Iterates until models are older than `since` OR `limit` is reached.
         """
         try:
-            models = self.api.list_models(
+            # Note: `limit` in list_models behaves like a page size or total limit?
+            # HfApi list_models returns an iterator. We can iterate it.
+            # Passing a large limit to list_models might be needed if the API truncates.
+            # But normally it yields.
+            # The API itself has a hard limit per page, but the client handles pagination if we iterate?
+            # Actually, `limit` in `list_models` usually restricts the TOTAL number returned.
+            # So we pass a high limit (e.g. 2000) to ensure we get enough candidates,
+            # then we stop early if we hit the timestamp.
+
+            models_iter = self.api.list_models(
                 sort="createdAt",
                 direction="-1",
                 limit=limit,
                 full=False,
                 fetch_config=True
             )
-            return list(models)
+
+            candidates = []
+            for m in models_iter:
+                # Check timestamp
+                if since and m.created_at:
+                    if m.created_at <= since:
+                        # Found a model older than last run -> Stop
+                        break
+                candidates.append(m)
+
+            return candidates
         except Exception as e:
             logger.error(f"Error fetching new models from HF: {e}")
             return []
 
-    def fetch_recently_updated_models(self, limit=100):
+    def fetch_recently_updated_models(self, since=None, limit=1000):
         """
         Fetches models that were recently updated (lastModified).
         """
         try:
-            models = self.api.list_models(
+            models_iter = self.api.list_models(
                 sort="lastModified",
                 direction="-1",
                 limit=limit,
                 full=False,
                 fetch_config=True
             )
-            return list(models)
+
+            candidates = []
+            for m in models_iter:
+                if since and m.lastModified:
+                    if m.lastModified <= since:
+                        break
+                candidates.append(m)
+
+            return candidates
         except Exception as e:
             logger.error(f"Error fetching updated models from HF: {e}")
             return []
