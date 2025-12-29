@@ -54,20 +54,22 @@ class LLMClient:
         {readme_content[:32000]}
 
         ## Requirements:
-        1. **Technical Summary**: No short USPs. Describe the technical core. What architecture? What dataset? What training method?
-        2. **Delta Analysis**: If this is an Adapter/Finetune:
+        1. **Language**: The `technical_summary` and `delta_explanation` MUST be written in **German**.
+        2. **Technical Summary**: No short USPs. Describe the technical core. What architecture? What dataset? What training method? Use proper Markdown formatting (lists with `- `) if listing features.
+        3. **Delta Analysis**: If this is an Adapter/Finetune:
            - What is the Base Model?
            - What specifically changed (Dataset, Objective, Quantization)?
            - Value Proposition: Why use this over the base model?
-        3. **Categorization**: Determine if it's a Base Model, LoRA Adapter, or Finetune.
-        4. **Scoring**: Score 1-10 on specialization for Edge/Manufacturing.
+           - **Structure**: Use Markdown lists (`- `) for points. Do NOT use `(1)`, `(2)` or `•` inline. Use newlines for lists.
+        4. **Categorization**: Determine if it's a Base Model, LoRA Adapter, or Finetune.
+        5. **Scoring**: Score 1-10 on specialization for Edge/Manufacturing.
 
         ## Output Format (JSON):
         {{
             "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
             "base_model": "<name of base model or null>",
-            "technical_summary": "<detailed technical description>",
-            "delta_explanation": "<explanation of the specific changes and value prop vs base>",
+            "technical_summary": "<detailed technical description in German, use Markdown lists if needed>",
+            "delta_explanation": "<explanation of changes and value prop in German, use Markdown lists for points>",
             "category": "Vision" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
             "specialist_score": <int 1-10>,
             "manufacturing_potential": <boolean>

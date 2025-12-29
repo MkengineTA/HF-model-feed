@@ -25,6 +25,7 @@ class Mailer:
 
         # HTML Template with CSS
         # Outlook styling: Arial font, table styling, clean layout.
+        # Added ul/li styling for nested lists from Delta analysis
         html_content = f"""
         <html>
         <head>
@@ -74,6 +75,8 @@ class Mailer:
                 }}
                 ul {{
                     padding-left: 20px;
+                    margin-top: 5px;
+                    margin-bottom: 10px;
                 }}
                 li {{
                     margin-bottom: 5px;

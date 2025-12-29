@@ -46,18 +46,18 @@ class Reporter:
                     delta = analysis.get('delta_explanation', 'N/A')
                     score = analysis.get('specialist_score', 0)
 
-                    # Tag formatting
+                    # Tag formatting: Comma separated, no hashtags
                     tags = m.get('hf_tags', [])
-                    tags_str = ' '.join([f"#{t}" for t in tags[:10]]) # Limit tags to keep it clean? Or all? User said "#tag1 #tag2".
+                    tags_str = ', '.join(tags[:10])
 
                     f.write(f"### [{name}]({link})\n")
                     f.write(f"- **Score:** {score}/10\n")
                     f.write(f"- **Typ:** {m_type}\n")
                     f.write(f"- **Basis:** {basis_str}\n")
-                    f.write(f"- **Zusammenfassung:** {summary}\n")
-                    f.write(f"- **Das Delta:** {delta}\n")
+                    f.write(f"- **Zusammenfassung:**\n{summary}\n") # Newline before content for lists
+                    f.write(f"- **Das Delta:**\n{delta}\n") # Newline before content for lists
                     f.write(f"- **Tags:** {tags_str}\n")
-                    f.write(f"- **Daten-Quelle:** README / Metadaten-Inferenz\n\n") # Static footer as discussed/inferred
+                    f.write(f"- **Daten-Quelle:** README / Metadaten-Inferenz\n\n")
                     f.write("---\n\n")
             else:
                 f.write("Keine Modelle erfolgreich analysiert.\n\n")
