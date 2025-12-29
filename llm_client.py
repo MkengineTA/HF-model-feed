@@ -7,15 +7,23 @@ logger = logging.getLogger("EdgeAIScout")
 
 def extract_json_from_text(text):
     """
-    Extracts JSON object from a string. Handles Markdown code blocks.
+    Extracts JSON object from a string. Handles Markdown code blocks and raw text.
     Returns None if parsing fails.
     """
+    # 1. Try fenced code block ```json ... ``` or just ``` ... ```
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass # Fallback to method 2
+
+    # 2. Fallback: find first '{' and last '}'
     try:
-        # Find first { and last }
         start_idx = text.find('{')
         end_idx = text.rfind('}')
 
-        if start_idx == -1 or end_idx == -1:
+        if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
             return None
 
         json_str = text[start_idx:end_idx+1]
@@ -39,40 +47,70 @@ class LLMClient:
         """
 
         system_prompt = (
-            "You are an expert AI researcher specializing in Edge AI and Manufacturing Specialist Models. "
-            "Your task is to analyze a Hugging Face model based on its README and tags. "
-            "You must provide a deep technical analysis, focusing on the 'Delta' (what changed from the base model). "
-            "Output valid JSON only."
+            "Du bist ein strenger Analyst für Edge-AI- und Manufacturing-Modelle. "
+            "Du darfst NICHTS erfinden. Wenn Informationen im README/Tags nicht klar belegt sind, "
+            "setze sie auf null und liste sie unter unknowns; confidence dann 'low' oder 'medium'. "
+            "Gib AUSSCHLIESSLICH valides JSON aus (kein Markdown, kein Text außerhalb JSON). "
+            "Halte Längenlimits strikt ein."
         )
 
         user_prompt = f"""
-        Analyze the following model deeply.
+        Analysiere das HuggingFace-Modell anhand README + Tags.
 
         HF Tags: {', '.join(tags) if tags else 'None'}
 
-        README Content (truncated if too long):
+        README (gekürzt):
         {readme_content[:32000]}
 
-        ## Requirements:
-        1. **Language**: The `technical_summary` and `delta_explanation` MUST be written in **German**.
-        2. **Technical Summary**: No short USPs. Describe the technical core. What architecture? What dataset? What training method? Use proper Markdown formatting (lists with `- `) if listing features.
-        3. **Delta Analysis**: If this is an Adapter/Finetune:
-           - What is the Base Model?
-           - What specifically changed (Dataset, Objective, Quantization)?
-           - Value Proposition: Why use this over the base model?
-           - **Structure**: Use Markdown lists (`- `) for points. Do NOT use `(1)`, `(2)` or `•` inline. Use newlines for lists.
-        4. **Categorization**: Determine if it's a Base Model, LoRA Adapter, or Finetune.
-        5. **Scoring**: Score 1-10 on specialization for Edge/Manufacturing.
+        LÄNGENLIMITS (hart):
+        - newsletter_blurb: max 180 Zeichen, genau 1 Satz.
+        - key_facts: genau 3 Einträge, je max 140 Zeichen.
+        - delta.what_changed: max 3 Bullets, je max 140 Zeichen.
+        - delta.why_it_matters: max 3 Bullets, je max 140 Zeichen.
+        - edge.deployment_notes: max 3 Bullets, je max 140 Zeichen.
+        - manufacturing.use_cases: max 3 Bullets, je max 140 Zeichen.
+        - manufacturing.risks: max 2 Bullets, je max 140 Zeichen.
+        - unknowns: max 3 Bullets, je max 120 Zeichen.
 
-        ## Output Format (JSON):
+        REGELN:
+        - Alles in Deutsch außer enum-Werte.
+        - params_m nur setzen, wenn im README/Modellkarte klar genannt; sonst null.
+        - min_vram_gb nur setzen, wenn klar genannt; sonst null.
+        - quantization: nur nennen, wenn explizit erwähnt oder offensichtlich aus Artefakten (z.B. gguf-Dateien) ableitbar; sonst "none".
+        - model_type sauber erkennen: Base Model vs Finetune vs LoRA Adapter.
+        - confidence:
+          - high: Base Model + Training/Delta klar beschrieben
+          - medium: teilweise klar
+          - low: viele unknowns / dünnes README
+
+        Gib JSON in diesem Format zurück:
+
         {{
-            "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
-            "base_model": "<name of base model or null>",
-            "technical_summary": "<detailed technical description in German, use Markdown lists if needed>",
-            "delta_explanation": "<explanation of changes and value prop in German, use Markdown lists for points>",
-            "category": "Vision" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
-            "specialist_score": <int 1-10>,
-            "manufacturing_potential": <boolean>
+          "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
+          "base_model": null,
+          "params_m": null,
+          "modality": "Text" | "Vision" | "Diffusion" | "Multimodal" | "Other",
+          "category": "Vision" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
+          "newsletter_blurb": "...",
+          "key_facts": ["...", "...", "..."],
+          "delta": {{
+            "what_changed": ["..."],
+            "why_it_matters": ["..."]
+          }},
+          "edge": {{
+            "edge_ready": false,
+            "min_vram_gb": null,
+            "quantization": ["none"],
+            "deployment_notes": ["..."]
+          }},
+          "manufacturing": {{
+            "manufacturing_fit_score": 1,
+            "use_cases": ["..."],
+            "risks": ["..."]
+          }},
+          "specialist_score": 1,
+          "confidence": "low",
+          "unknowns": ["..."]
         }}
         """
 
@@ -82,7 +120,8 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.2,
+            "temperature": 0.1,
+            "max_tokens": 1200, # Increased slightly to ensure full JSON fits
             "stream": False
         }
 

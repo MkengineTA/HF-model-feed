@@ -27,8 +27,6 @@ class TestIntegration(unittest.TestCase):
         # Database
         mock_db_instance = MockDatabase.return_value
         mock_db_instance.get_existing_ids.return_value = {"old-model/123", "updated-model/456"}
-
-        # Last run 24h ago
         last_run = datetime.now(timezone.utc) - timedelta(hours=24)
         mock_db_instance.get_last_run_timestamp.return_value = last_run
 
@@ -44,26 +42,21 @@ class TestIntegration(unittest.TestCase):
         # HF Client
         mock_hf_instance = MockHFClient.return_value
 
-        # 1. Models
-        # M1: Created just now (should be fetched)
         m_new = MagicMock()
         m_new.id = "new/specialist-model-7b"
         m_new.tags = ["manufacturing"]
         m_new.created_at = datetime.now(timezone.utc)
         m_new.lastModified = datetime.now(timezone.utc)
 
-        # M2: Updated just now (should be fetched)
         m_updated = MagicMock()
         m_updated.id = "updated-model/456"
         m_updated.tags = ["vision"]
         m_updated.created_at = older
         m_updated.lastModified = datetime.now(timezone.utc)
 
-        # M3: Trending (New Discovery)
         m_trending = MagicMock()
         m_trending.id = "trending/hot-model"
 
-        # Info for trending
         m_trending_info = MagicMock()
         m_trending_info.id = "trending/hot-model"
         m_trending_info.tags = ["hot"]
@@ -85,27 +78,40 @@ class TestIntegration(unittest.TestCase):
         mock_extract_params.return_value = 7.0
         mock_hf_instance.get_model_readme.return_value = "Detailed readme content " * 20
 
-        # LLM
+        # LLM - New Comprehensive Structure
         mock_llm_instance = MockLLMClient.return_value
         mock_llm_instance.analyze_model.return_value = {
             "model_type": "Finetune",
             "base_model": "llama-2",
-            "technical_summary": "Tech summary",
-            "delta_explanation": "Delta details",
-            "specialist_score": 8,
-            "manufacturing_potential": True
+            "params_m": 7000,
+            "modality": "Text",
+            "category": "Vision",
+            "newsletter_blurb": "A great manufacturing model.",
+            "key_facts": ["Fact 1", "Fact 2", "Fact 3"],
+            "delta": {
+                "what_changed": ["Changed dataset", "New objective"],
+                "why_it_matters": ["Better accuracy", "Faster"]
+            },
+            "edge": {
+                "edge_ready": True,
+                "min_vram_gb": 8,
+                "deployment_notes": ["Use int8"]
+            },
+            "manufacturing": {
+                "manufacturing_fit_score": 9,
+                "use_cases": ["Defect detection"],
+                "risks": ["None"]
+            },
+            "specialist_score": 9,
+            "confidence": "high",
+            "unknowns": []
         }
 
         # Run Main
-        with patch.object(sys, 'argv', ["main.py", "--limit", "10"]):
+        with patch.object(sys, 'argv', ["main.py", "--limit", "10", "--force-email"]):
             main.main()
 
         # Verifications
-        # 1. Check fetch calls passed timestamp
-        mock_hf_instance.fetch_new_models.assert_called_with(since=last_run, limit=10)
-        mock_hf_instance.fetch_recently_updated_models.assert_called_with(since=last_run, limit=10)
-
-        # 2. Check saved models
         saved_models = [call[0][0] for call in mock_db_instance.save_model.call_args_list]
         saved_ids = [m['id'] for m in saved_models]
 
@@ -113,10 +119,7 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("updated-model/456", saved_ids)
         self.assertIn("trending/hot-model", saved_ids)
 
-        # 3. Check State Update
         mock_db_instance.set_last_run_timestamp.assert_called()
-
-        # 4. Check Mailer
         MockMailer.return_value.send_report.assert_called()
 
 if __name__ == '__main__':

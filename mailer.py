@@ -20,81 +20,103 @@ class Mailer:
         """
         Converts Markdown to HTML with Outlook-friendly styling.
         """
-        # Convert MD to basic HTML
         html_body = markdown2.markdown(markdown_content)
 
-        # HTML Template with CSS
-        # Outlook styling: Arial font, table styling, clean layout.
-        # Added ul/li styling for nested lists from Delta analysis
         html_content = f"""
         <html>
         <head>
             <style>
+                /* Reset & Base */
                 body {{
-                    font-family: Arial, sans-serif;
+                    font-family: 'Segoe UI', Arial, sans-serif;
                     font-size: 14px;
-                    line-height: 1.6;
+                    line-height: 1.5;
                     color: #333333;
-                    background-color: #f9f9f9;
+                    background-color: #f4f4f4;
                     margin: 0;
                     padding: 20px;
                 }}
                 .container {{
-                    max_width: 800px;
+                    max_width: 700px;
                     margin: 0 auto;
                     background-color: #ffffff;
-                    padding: 30px;
-                    border: 1px solid #dddddd;
-                    border-radius: 5px;
+                    padding: 40px;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
                 }}
+
+                /* Headings */
                 h1 {{
-                    color: #2c3e50;
-                    border-bottom: 2px solid #3498db;
-                    padding-bottom: 10px;
-                    font-size: 24px;
+                    color: #1a202c;
+                    border-bottom: 3px solid #3182ce;
+                    padding-bottom: 15px;
+                    font-size: 26px;
+                    margin-bottom: 25px;
                 }}
                 h2 {{
-                    color: #e67e22;
-                    margin-top: 30px;
+                    color: #2d3748;
+                    margin-top: 40px;
+                    margin-bottom: 15px;
                     font-size: 20px;
-                    border-bottom: 1px solid #eeeeee;
-                    padding-bottom: 5px;
+                    background-color: #f7fafc;
+                    padding: 10px;
+                    border-left: 4px solid #3182ce;
+                    border-radius: 4px;
                 }}
                 h3 {{
-                    color: #2980b9;
-                    font-size: 18px;
+                    color: #4a5568;
+                    font-size: 16px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
                     margin-top: 25px;
-                    margin-bottom: 5px;
+                    margin-bottom: 10px;
+                    border-bottom: 1px solid #edf2f7;
+                    padding-bottom: 5px;
                 }}
-                a {{
-                    color: #3498db;
-                    text-decoration: none;
+
+                /* Typography */
+                p {{ margin-bottom: 15px; }}
+                strong {{ color: #2d3748; font-weight: 600; }}
+                em {{ color: #718096; font-size: 13px; }}
+                blockquote {{
+                    border-left: 3px solid #cbd5e0;
+                    margin: 0 0 20px 0;
+                    padding: 10px 15px;
+                    background-color: #f8fafc;
+                    color: #4a5568;
+                    font-style: italic;
                 }}
-                a:hover {{
-                    text-decoration: underline;
-                }}
+                a {{ color: #3182ce; text-decoration: none; font-weight: 500; }}
+                a:hover {{ text-decoration: underline; }}
+
+                /* Lists (Outlook Fixes) */
                 ul {{
                     padding-left: 20px;
                     margin-top: 5px;
-                    margin-bottom: 10px;
+                    margin-bottom: 15px;
                 }}
                 li {{
-                    margin-bottom: 5px;
+                    margin-bottom: 6px;
+                    padding-left: 5px;
                 }}
-                strong {{
-                    color: #555555;
-                }}
+
+                /* Divider */
                 hr {{
                     border: 0;
                     height: 1px;
-                    background: #eeeeee;
-                    margin: 20px 0;
+                    background: #e2e8f0;
+                    margin: 40px 0;
                 }}
+
+                /* Footer */
                 .footer {{
-                    margin-top: 40px;
+                    margin-top: 50px;
                     font-size: 12px;
-                    color: #999999;
+                    color: #a0aec0;
                     text-align: center;
+                    border-top: 1px solid #edf2f7;
+                    padding-top: 20px;
                 }}
             </style>
         </head>
@@ -102,7 +124,7 @@ class Mailer:
             <div class="container">
                 {html_body}
                 <div class="footer">
-                    <p>Generated by Edge AI Scout</p>
+                    <p>Generated by Edge AI Scout • {datetime.now().year}</p>
                 </div>
             </div>
         </body>
@@ -111,11 +133,8 @@ class Mailer:
         return html_content
 
     def send_report(self, markdown_content, date_str):
-        """
-        Sends the daily report via email.
-        """
         if not self.user or not self.password or not self.receiver:
-            logger.warning("Email configuration missing (SMTP_USER, SMTP_PASS, RECEIVER_MAIL). Skipping email dispatch.")
+            logger.warning("Email configuration missing. Skipping email dispatch.")
             return
 
         try:
@@ -127,14 +146,8 @@ class Mailer:
             message["From"] = self.user
             message["To"] = self.receiver
 
-            # Attach parts (Plain text version could be added, but focusing on HTML)
-            # part1 = MIMEText(markdown_content, "plain")
-            part2 = MIMEText(html_content, "html")
+            message.attach(MIMEText(html_content, "html"))
 
-            # message.attach(part1)
-            message.attach(part2)
-
-            # Send
             logger.info("Connecting to SMTP server...")
             context = ssl.create_default_context()
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
@@ -144,7 +157,5 @@ class Mailer:
 
             logger.info(f"Email sent successfully to {self.receiver}")
 
-        except smtplib.SMTPAuthenticationError:
-            logger.error("SMTP Authentication failed. Check username and password.")
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
