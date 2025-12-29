@@ -70,11 +70,11 @@ class Reporter:
                     manu = a.get('manufacturing', {})
                     f.write("### 🏭 Manufacturing Fit\n")
                     if manu.get('use_cases'):
-                        f.write("**Use Cases:**\n")
+                        f.write("**Use Cases:**\n\n")
                         for item in manu.get('use_cases', []):
                             f.write(f"- {item}\n")
                     if manu.get('risks'):
-                        f.write("**Risiken:**\n")
+                        f.write("\n**Risiken:**\n\n")
                         for item in manu.get('risks', []):
                             f.write(f"- {item}\n")
                     f.write("\n")

@@ -70,7 +70,7 @@ class LLMClient:
         {readme_content[:32000]}
 
         LÄNGENLIMITS (hart):
-        - newsletter_blurb: max 180 Zeichen, genau 1 Satz.
+        - newsletter_blurb: Prägnante Zusammenfassung, ca. 80-100 Wörter. Satzanzahl flexibel. Fokus auf technischen Kern und Anwendungszweck.
         - key_facts: genau 3 Einträge, je max 140 Zeichen.
         - delta.what_changed: max 3 Bullets, je max 140 Zeichen.
         - delta.why_it_matters: max 3 Bullets, je max 140 Zeichen.
@@ -128,7 +128,7 @@ class LLMClient:
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.1,
-            # max_tokens removed to allow full reasoning
+            # max_tokens removed
             "stream": False
         }
 
