@@ -31,7 +31,8 @@ Der Kern des Scouts ist ein intelligenter LLM-Agent.
 4.  **Output**: Strukturiertes JSON für die Weiterverarbeitung.
 
 ### 4. Reporting
-*   **Markdown Newsletter**: Listet alle verarbeiteten Modelle, sortiert nach Specialist Score. Enthält detaillierte technische Zusammenfassungen und Delta-Analysen.
+*   **Markdown Newsletter**: Listet alle verarbeiteten Modelle, sortiert nach Specialist Score.
+*   **E-Mail Versand**: Generiert einen professionellen HTML-Report (Outlook-kompatibel) und versendet ihn via SMTP.
 *   **CSV Export**: Strukturierte Liste für Labeling.
 *   **SQLite Datenbank**: Speichert Status, Zeitstempel (Created/Modified) und Analyse-Ergebnisse.
 
@@ -43,23 +44,15 @@ Damit der Scout zuverlässig funktioniert, muss das gewählte LLM bestimmte tech
 
 ### 1. Context Window (Kontext-Fenster)
 *   **Empfehlung:** **Mindestens 16k Tokens** (besser 32k).
-*   **Grund:** Der Scout sendet bis zu **32.000 Zeichen** (ca. 8k - 10k Tokens) reinen README-Text plus System-Prompts. Ein Modell mit nur 4k oder 8k Kontext würde hier abschneiden oder halluzinieren.
-*   **Einstellung bei `llama-server`**: Nutzen Sie den Parameter `-c 16384` oder höher.
+*   **Grund:** Der Scout sendet bis zu **32.000 Zeichen** (ca. 8k - 10k Tokens) reinen README-Text.
 
 ### 2. Fähigkeiten (Capabilities)
-*   **JSON Output (Kritisch):** Das Modell **muss** zuverlässig valides JSON generieren können. Der Scout nutzt Prompt-Engineering, um JSON zu erzwingen. Modelle, die dazu neigen, "Hier ist dein JSON:" davor zu schreiben (Chat-Fluff), sind weniger geeignet (obwohl der Code versucht, dies zu parsen).
-*   **Reasoning (Wichtig):** Für die **Delta-Analyse** muss das Modell verstehen, *warum* ein Finetune existiert. Es muss technische Details aus langen Texten extrahieren und abstrahieren.
-*   **Tool Calling:** Wird **nicht** benötigt. Der Scout nutzt Standard-Completion mit JSON-Schema im Prompt.
+*   **JSON Output (Kritisch):** Das Modell **muss** zuverlässig valides JSON generieren.
+*   **Reasoning (Wichtig):** Für die **Delta-Analyse** muss das Modell verstehen, *warum* ein Finetune existiert.
 
 ### 3. Modell-Empfehlungen
-*   **Cloud (OpenRouter):**
-    *   `qwen/qwen-2.5-72b-instruct` (Hervorragend für JSON & Coding Tasks, günstig).
-    *   `meta-llama/llama-3.1-70b-instruct` (Sehr starkes Reasoning, 128k Kontext).
-    *   `openai/gpt-4o-mini` (Schnell, günstig, sehr zuverlässiges JSON).
-*   **Lokal (Ollama / Llama.cpp):**
-    *   `llama3.1:8b-fp16` (Gutes Minimum, Kontext auf 16k setzen!).
-    *   `mistral-nemo:12b` (Sehr gut für technische Texte, großes Kontextfenster).
-    *   `qwen2.5:14b` (Aktueller Preis/Leistungs-Sieger für Structured Output).
+*   **Cloud (OpenRouter):** `qwen/qwen-2.5-72b-instruct`, `meta-llama/llama-3.1-70b-instruct`.
+*   **Lokal (Ollama):** `llama3.1:8b-fp16`, `mistral-nemo:12b`.
 
 ---
 
@@ -87,46 +80,69 @@ Damit der Scout zuverlässig funktioniert, muss das gewählte LLM bestimmte tech
 ### Konfiguration (.env)
 ```ini
 HF_TOKEN=...
-# Datenbank Pfad
 DB_PATH=models.db
 
-# LLM Konfiguration (Beispiel OpenRouter)
+# LLM Konfiguration
 LLM_API_URL=https://openrouter.ai/api/v1/chat/completions
 LLM_MODEL=qwen/qwen-2.5-72b-instruct
 LLM_API_KEY=sk-or-your-key-here
-# Optional: App Name für OpenRouter Statistiken
-OR_APP_NAME=Edge AI Scout
-OR_SITE_URL=https://github.com/IhrUser/EdgeAIScout
+LLM_ENABLE_REASONING=True
+
+# E-Mail Konfiguration (Beispiel Gmail)
+SMTP_USER=ihre.email@gmail.com
+SMTP_PASS=ihr-app-passwort
+RECEIVER_MAIL=ziel.email@firma.com
 ```
 
 ---
 
-## 🚀 Nutzung
+## 📧 E-Mail Setup (Gmail)
+
+Da Gmail den einfachen Login via Passwort deaktiviert hat, benötigen Sie ein **App-Passwort**:
+
+1.  Loggen Sie sich in Ihr Google Konto ein.
+2.  Gehen Sie zu **Sicherheit** -> **Bestätigung in zwei Schritten** (muss aktiviert sein).
+3.  Scrollen Sie unten zu **App-Passwörter**.
+4.  Erstellen Sie ein neues Passwort (Name: "Edge AI Scout").
+5.  Kopieren Sie das 16-stellige Passwort (ohne Leerzeichen) in die `.env` unter `SMTP_PASS`.
+
+Der generierte HTML-Report ist für **Outlook**, **Thunderbird** und **Gmail Web** optimiert (nutzt Inline-CSS und Tabellen-Layouts).
+
+---
+
+## ❓ FAQ & Logik
+
+### Wie funktioniert der erste Run?
+Wenn die Datenbank leer ist (erster Start), setzt der Scout den "letzten Run" automatisch auf **24 Stunden in der Vergangenheit**.
+Er lädt also **nicht** alle Modelle seit Beginn der Zeit, sondern nur die des letzten Tages.
+
+### Wie wird das Update-Intervall gesteuert?
+Das Skript speichert am Ende jedes erfolgreichen Laufs einen Zeitstempel (`metadata` Tabelle). Beim nächsten Start werden nur Modelle geladen, die **nach** diesem Zeitstempel erstellt oder aktualisiert wurden.
+
+---
+
+## 🧪 Testing
+
+Um das Setup zu testen, ohne die Datenbank zu verändern ("Dry Run"), aber trotzdem eine Test-E-Mail zu erhalten:
 
 ```bash
-python main.py --limit 100
+python main.py --limit 5 --dry-run --force-email
 ```
+*   `--limit 5`: Lädt nur 5 Modelle (spart API-Calls/Kosten).
+*   `--dry-run`: Speichert nichts in die DB (Modelle werden beim nächsten echten Run erneut verarbeitet).
+*   `--force-email`: Erzwingt den E-Mail-Versand, der normalerweise im Dry-Run deaktiviert ist.
 
-### Parameter
-*   `--limit <n>`: Anzahl der Modelle pro Quelle (Standard: 100).
-*   `--dry-run`: Test-Modus (keine DB-Speicherung).
+---
+
+## 🚀 Nutzung (Produktion)
+
+Starten Sie den Scan ohne Test-Flags:
+
+```bash
+python main.py
+```
 
 ### Automatisierung (Cronjob)
 ```bash
 0 6 * * * cd /pfad/zu/edge-ai-scout && /pfad/zu/python main.py >> scout.log 2>&1
 ```
-
----
-
-## 📊 Output Beispiel (Report)
-
-### [Manufacturing-BERT-v2](https://huggingface.co/...)
-- **Score:** 9/10
-- **Typ:** Finetune
-- **Basis:** bert-base-uncased
-- **Zusammenfassung:** Ein auf 50.000 Wartungsprotokollen nachtrainiertes BERT Modell...
-- **Das Delta:** Im Gegensatz zum Basismodell versteht dieses Modell spezifische Fehlercodes (ISO-1234) und Maschinenteil-Bezeichnungen.
-- **Tags:** #manufacturing #nlp
-- **Daten-Quelle:** README / Metadaten-Inferenz
-
----

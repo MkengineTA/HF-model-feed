@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
     parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
     parser.add_argument("--dry-run", action="store_true", help="Do not save to DB")
+    parser.add_argument("--force-email", action="store_true", help="Send email even in dry-run mode")
     args = parser.parse_args()
 
     # Capture start time to save as last_run later
@@ -76,7 +77,6 @@ def main():
     def add_candidate(info, source_tag):
         if info.id not in candidates:
             candidates[info.id] = info
-        # We could tag source if needed, but info.lastModified is key
 
     for m in recent_models: add_candidate(m, 'created')
     for m in updated_models: add_candidate(m, 'updated')
@@ -210,13 +210,16 @@ def main():
         logger.info(f"Report generated: {md_path}")
 
         # 5. Send Email
-        # Read the generated markdown content to convert to HTML for email
-        try:
-            with open(md_path, 'r', encoding='utf-8') as f:
-                md_content = f.read()
-            mailer.send_report(md_content, date_str)
-        except Exception as e:
-            logger.error(f"Failed to read report for email dispatch: {e}")
+        # Only send if not dry-run, OR if force-email is set
+        if not args.dry_run or args.force_email:
+            try:
+                with open(md_path, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                mailer.send_report(md_content, date_str)
+            except Exception as e:
+                logger.error(f"Failed to read report for email dispatch: {e}")
+        else:
+            logger.info("Email dispatch skipped (Dry-Run active). Use --force-email to override.")
 
     else:
         logger.info("No new models processed.")
@@ -225,6 +228,8 @@ def main():
     if not args.dry_run:
         db.set_last_run_timestamp(current_run_time)
         logger.info(f"Updated last run timestamp to {current_run_time}")
+    else:
+        logger.info("State update skipped (Dry-Run active).")
 
 if __name__ == "__main__":
     main()
