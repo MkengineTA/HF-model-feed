@@ -10,11 +10,18 @@ def extract_json_from_text(text):
     Extracts JSON object from a string. Handles Markdown code blocks and raw text.
     Returns None if parsing fails.
     """
+    # Helper to clean common JSON errors
+    def clean_json(json_text):
+        # Remove trailing commas in objects/arrays (simple regex)
+        # Match , followed by whitespace and } or ]
+        json_text = re.sub(r',\s*([\]}])', r'\1', json_text)
+        return json_text
+
     # 1. Try fenced code block ```json ... ``` or just ``` ... ```
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(1))
+            return json.loads(clean_json(m.group(1)))
         except json.JSONDecodeError:
             pass # Fallback to method 2
 
@@ -27,7 +34,7 @@ def extract_json_from_text(text):
             return None
 
         json_str = text[start_idx:end_idx+1]
-        return json.loads(json_str)
+        return json.loads(clean_json(json_str))
     except json.JSONDecodeError:
         return None
 
@@ -121,7 +128,7 @@ class LLMClient:
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.1,
-            "max_tokens": 1200, # Increased slightly to ensure full JSON fits
+            "max_tokens": 1500,
             "stream": False
         }
 
@@ -151,7 +158,7 @@ class LLMClient:
 
             analysis = extract_json_from_text(content)
             if not analysis:
-                logger.error(f"Failed to parse JSON from LLM response: {content[:100]}...")
+                logger.error(f"Failed to parse JSON from LLM response. Raw Content:\n{content[:500]}...\n[Truncated]")
                 return None
 
             return analysis

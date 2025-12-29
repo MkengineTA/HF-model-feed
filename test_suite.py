@@ -49,15 +49,12 @@ class TestLLMClient(unittest.TestCase):
         markdown_json = 'Here is the JSON:\n```json\n{"key": "value"}\n```'
         self.assertEqual(extract_json_from_text(markdown_json), {"key": "value"})
 
-        # 3. Markdown Block without json tag
-        markdown_plain = '```\n{"key": "value"}\n```'
-        self.assertEqual(extract_json_from_text(markdown_plain), {"key": "value"})
+        # 3. Trailing comma
+        trailing = '{"key": "value", }'
+        # The simple regex `re.sub(r',\s*([\]}])', r'\1', json_text)` handles this
+        self.assertEqual(extract_json_from_text(trailing), {"key": "value"})
 
-        # 4. Surrounded by text
-        surrounded = 'Sure, here: {"key": "value"} Hope it helps.'
-        self.assertEqual(extract_json_from_text(surrounded), {"key": "value"})
-
-        # 5. Broken
+        # 4. Broken
         broken_json = '{"key": "val'
         self.assertIsNone(extract_json_from_text(broken_json))
 

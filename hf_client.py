@@ -3,6 +3,7 @@ from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 import logging
 import requests
 from datetime import datetime
+import time
 
 logger = logging.getLogger("EdgeAIScout")
 
@@ -12,21 +13,37 @@ class HFClient:
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.base_url = "https://huggingface.co/api"
 
+    def _make_request(self, method, url, params=None, max_retries=3):
+        """
+        Helper to make requests with retry logic for 429 errors.
+        """
+        for i in range(max_retries):
+            try:
+                response = requests.request(method, url, headers=self.headers, params=params, timeout=20)
+                if response.status_code == 429:
+                    wait_time = int(response.headers.get("Retry-After", 10 * (i + 1)))
+                    logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                response.raise_for_status()
+                return response
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and i < max_retries - 1:
+                     continue
+                raise e
+            except Exception as e:
+                if i < max_retries - 1:
+                    logger.warning(f"Request failed: {e}. Retrying...")
+                    time.sleep(2)
+                    continue
+                raise e
+        return None
+
     def fetch_new_models(self, since=None, limit=1000):
         """
         Fetches the latest models (Created).
-        Iterates until models are older than `since` OR `limit` is reached.
         """
         try:
-            # Note: `limit` in list_models behaves like a page size or total limit?
-            # HfApi list_models returns an iterator. We can iterate it.
-            # Passing a large limit to list_models might be needed if the API truncates.
-            # But normally it yields.
-            # The API itself has a hard limit per page, but the client handles pagination if we iterate?
-            # Actually, `limit` in `list_models` usually restricts the TOTAL number returned.
-            # So we pass a high limit (e.g. 2000) to ensure we get enough candidates,
-            # then we stop early if we hit the timestamp.
-
             models_iter = self.api.list_models(
                 sort="createdAt",
                 direction="-1",
@@ -37,10 +54,8 @@ class HFClient:
 
             candidates = []
             for m in models_iter:
-                # Check timestamp
                 if since and m.created_at:
                     if m.created_at <= since:
-                        # Found a model older than last run -> Stop
                         break
                 candidates.append(m)
 
@@ -81,8 +96,7 @@ class HFClient:
         try:
             url = f"{self.base_url}/trending"
             params = {"type": "model", "limit": limit}
-            response = requests.get(url, headers=self.headers, params=params, timeout=10)
-            response.raise_for_status()
+            response = self._make_request("GET", url, params=params)
             data = response.json()
 
             models = []
@@ -102,8 +116,7 @@ class HFClient:
         try:
             url = f"{self.base_url}/daily_papers"
             params = {"limit": limit}
-            response = requests.get(url, headers=self.headers, params=params, timeout=10)
-            response.raise_for_status()
+            response = self._make_request("GET", url, params=params)
             papers = response.json()
 
             model_ids = []
@@ -124,15 +137,20 @@ class HFClient:
     def get_model_file_details(self, model_id):
         """
         Fetches the file tree to get sizes and security status.
+        Uses _make_request for 429 handling.
         """
         try:
             url = f"{self.base_url}/models/{model_id}/tree/main"
             params = {"recursive": "true", "expand": "true"}
-            response = requests.get(url, headers=self.headers, params=params, timeout=20)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.json()
+
+            try:
+                response = self._make_request("GET", url, params=params)
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise e
+
         except Exception as e:
             logger.error(f"Error fetching file details for {model_id}: {e}")
             return None
@@ -140,6 +158,7 @@ class HFClient:
     def get_model_readme(self, model_id):
         """
         Downloads the README.md content.
+        Note: hf_hub_download handles retries internally often, but we rely on it.
         """
         try:
             readme_path = hf_hub_download(repo_id=model_id, filename="README.md")
