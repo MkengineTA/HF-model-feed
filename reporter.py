@@ -57,11 +57,11 @@ class Reporter:
                     delta = a.get('delta', {})
                     f.write("### 🔺 Delta (vs. Base)\n")
                     if delta.get('what_changed'):
-                        f.write("**Was ist neu?**\n")
+                        f.write("**Was ist neu?**\n\n")
                         for item in delta.get('what_changed', []):
                             f.write(f"- {item}\n")
                     if delta.get('why_it_matters'):
-                        f.write("**Warum wichtig?**\n")
+                        f.write("\n**Warum wichtig?**\n\n")
                         for item in delta.get('why_it_matters', []):
                             f.write(f"- {item}\n")
                     f.write("\n")

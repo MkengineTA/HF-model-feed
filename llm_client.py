@@ -128,7 +128,7 @@ class LLMClient:
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.1,
-            "max_tokens": 1500,
+            # max_tokens removed to allow full reasoning
             "stream": False
         }
 
