@@ -23,4 +23,4 @@ SMTP_PASS = os.getenv("SMTP_PASS")
 RECEIVER_MAIL = os.getenv("RECEIVER_MAIL")
 
 # Parameter thresholds
-MAX_PARAMS_BILLIONS = 10.0
+MAX_PARAMS_BILLIONS = 40.0
