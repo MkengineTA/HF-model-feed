@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlparse
 
 # --- Constants ---
 
@@ -172,12 +173,22 @@ def is_boilerplate_readme(readme: str) -> bool:
 def compute_info_score(readme, yaml_meta, tags, links_present):
     score = 0
     txt = (readme or "").lower()
+
     if yaml_meta: score += 1
-    if yaml_meta and ('base_model' in yaml_meta or 'base_model' in txt): score += 1
-    if yaml_meta and ('datasets' in yaml_meta or 'dataset' in txt): score += 1
-    if yaml_meta and ('license' in yaml_meta or 'license' in txt): score += 1
+
+    # Check text OR yaml
+    has_base = (yaml_meta and 'base_model' in yaml_meta) or ('base_model' in txt)
+    if has_base: score += 1
+
+    has_dataset = (yaml_meta and 'datasets' in yaml_meta) or ('dataset' in txt)
+    if has_dataset: score += 1
+
+    has_license = (yaml_meta and 'license' in yaml_meta) or ('license' in txt)
+    if has_license: score += 1
+
     if tags and len(tags) > 2: score += 1
     if links_present: score += 1
+
     return score
 
 def is_secure(file_details):
@@ -189,3 +200,28 @@ def is_secure(file_details):
         for s in ['jFrogScan', 'protectAiScan', 'avScan', 'pickleImportScan', 'virusTotalScan']:
             if sec.get(s, {}).get('status') in ['unsafe', 'malicious', 'infected']: return False
     return True
+
+def has_external_links(readme: str) -> bool:
+    """
+    True if README contains external http(s) links (not huggingface.co).
+    """
+    if not readme:
+        return False
+
+    urls = re.findall(r"https?://[^\s)\]}>]+", readme)
+
+    for u in urls:
+        try:
+            host = urlparse(u).netloc.lower()
+        except Exception:
+            continue
+
+        if not host:
+            continue
+
+        if host.endswith("huggingface.co") or host == "hf.co" or host.endswith(".hf.co"):
+            continue
+
+        return True
+
+    return False

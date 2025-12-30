@@ -31,6 +31,14 @@ class TestIntegration(unittest.TestCase):
         last_run = datetime.now(timezone.utc) - timedelta(hours=24)
         mock_db_instance.get_last_run_timestamp.return_value = last_run
 
+        # Mock Last Modified for Updated Model
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        def side_effect_last_mod(mid):
+            if mid == "updated-model/456": return yesterday.isoformat()
+            if mid == "old-model/123": return yesterday.isoformat()
+            return None
+        mock_db_instance.get_model_last_modified.side_effect = side_effect_last_mod
+
         # Author cache mock
         # namespace "new" -> unknown (fetch)
         # namespace "updated-model" -> user (cached)
@@ -60,7 +68,8 @@ class TestIntegration(unittest.TestCase):
         m_updated.id = "updated-model/456"
         m_updated.tags = ["vision"]
         m_updated.created_at = datetime.now(timezone.utc) - timedelta(days=10)
-        m_updated.lastModified = datetime.now(timezone.utc)
+        # Ensure API time is significantly newer
+        m_updated.lastModified = datetime.now(timezone.utc) + timedelta(hours=1)
 
         m_trending = MagicMock()
         m_trending.id = "trending/hot-model"
@@ -81,7 +90,8 @@ class TestIntegration(unittest.TestCase):
         mock_hf_instance.get_model_file_details.return_value = []
         mock_is_secure.return_value = True
         mock_extract_params.return_value = 7.0
-        mock_hf_instance.get_model_readme.return_value = "Detailed readme content with evidence quote here." * 20
+        # Boost info score: base_model, dataset, license
+        mock_hf_instance.get_model_readme.return_value = "Detailed readme content with base_model: llama, dataset: c4, license: mit. " * 20
 
         # LLM - New Comprehensive Structure with Evidence
         mock_llm_instance = MockLLMClient.return_value
