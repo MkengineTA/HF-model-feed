@@ -132,6 +132,8 @@ def has_quant_in_name(model_id: str) -> bool:
 
 def is_export_or_conversion(model_id, tags, file_details=None):
     mid = model_id.lower()
+    if "thireus" in mid: return True
+
     tagset = {t.lower() for t in (tags or [])}
 
     if has_quant_in_name(model_id): return True

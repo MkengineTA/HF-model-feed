@@ -13,36 +13,32 @@ class HFClient:
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.base_url = "https://huggingface.co/api"
 
-    def _make_request(self, method, url, params=None, max_retries=3):
+    def _make_request(self, method, url, params=None, max_retries=3, headers=None):
         """
         Helper to make requests with retry logic for 429 errors.
         """
+        req_headers = headers if headers is not None else self.headers
         for i in range(max_retries):
             try:
-                response = requests.request(method, url, headers=self.headers, params=params, timeout=20)
+                response = requests.request(method, url, headers=req_headers, params=params, timeout=20)
                 if response.status_code == 429:
                     wait_time = int(response.headers.get("Retry-After", 10 * (i + 1)))
                     logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                     continue
-                # For Author check, 404 is valid (not an error to raise)
-                if response.status_code == 404:
-                    return response
-
-                response.raise_for_status()
+                # We handle status codes in callers mostly, but raise_for_status handles 4xx/5xx
+                # For tri-state logic (404 check), callers need the response object even if 404.
+                # So we return response object here.
                 return response
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429 and i < max_retries - 1:
-                     continue
-                if e.response.status_code == 404: # Just in case raise_for_status didn't catch or logic changed
-                    return e.response
-                raise e
-            except Exception as e:
+            except requests.exceptions.RequestException as e:
+                # requests.request doesn't raise unless network error. HTTP status doesn't raise unless raise_for_status called.
+                # But if network error:
                 if i < max_retries - 1:
                     logger.warning(f"Request failed: {e}. Retrying...")
                     time.sleep(2)
                     continue
-                raise e
+                # If final attempt fails or it's a hard error
+                return None # Return None on network failure
         return None
 
     def fetch_new_models(self, since=None, limit=1000):
@@ -88,13 +84,15 @@ class HFClient:
             url = f"{self.base_url}/trending"
             params = {"type": "model", "limit": limit}
             response = self._make_request("GET", url, params=params)
-            data = response.json()
-            models = []
-            for item in data.get("recentlyTrending", []):
-                repo_data = item.get("repoData", {})
-                if repo_data:
-                     models.append(repo_data.get("id"))
-            return models
+            if response and response.status_code == 200:
+                data = response.json()
+                models = []
+                for item in data.get("recentlyTrending", []):
+                    repo_data = item.get("repoData", {})
+                    if repo_data:
+                         models.append(repo_data.get("id"))
+                return models
+            return []
         except Exception as e:
             logger.error(f"Error fetching trending models: {e}")
             return []
@@ -104,16 +102,18 @@ class HFClient:
             url = f"{self.base_url}/daily_papers"
             params = {"limit": limit}
             response = self._make_request("GET", url, params=params)
-            papers = response.json()
-            model_ids = []
-            for paper in papers:
-                paper_info = paper.get("paper", {})
-                project_page = paper_info.get("projectPage", "")
-                if project_page and "huggingface.co/" in project_page:
-                    part = project_page.split("huggingface.co/")[-1].split("?")[0].strip("/")
-                    if "/" in part and len(part.split("/")) >= 2:
-                         model_ids.append(part)
-            return list(set(model_ids))
+            if response and response.status_code == 200:
+                papers = response.json()
+                model_ids = []
+                for paper in papers:
+                    paper_info = paper.get("paper", {})
+                    project_page = paper_info.get("projectPage", "")
+                    if project_page and "huggingface.co/" in project_page:
+                        part = project_page.split("huggingface.co/")[-1].split("?")[0].strip("/")
+                        if "/" in part and len(part.split("/")) >= 2:
+                             model_ids.append(part)
+                return list(set(model_ids))
+            return []
         except Exception as e:
             logger.error(f"Error fetching daily papers: {e}")
             return []
@@ -123,8 +123,14 @@ class HFClient:
             url = f"{self.base_url}/models/{model_id}/tree/main"
             params = {"recursive": "true", "expand": "true"}
             response = self._make_request("GET", url, params=params)
-            if response.status_code == 404: return None
-            return response.json()
+            if response:
+                if response.status_code == 200:
+                    return response.json()
+                if response.status_code == 404:
+                    return None
+                # Other status codes might be auth or 429
+                response.raise_for_status()
+            return None
         except Exception as e:
             logger.error(f"Error fetching file details for {model_id}: {e}")
             return None
@@ -147,26 +153,54 @@ class HFClient:
             logger.warning(f"Could not fetch info for {model_id}: {e}")
             return None
 
-    # --- New Author/Org Methods ---
+    # --- New Author/Org Methods (Tri-State) ---
 
     def get_org_details(self, namespace):
-        """Checks if namespace is an organization."""
+        """
+        Returns:
+        - dict: if Org exists (200)
+        - {}: if Org not found (404) -> 'Not an Org'
+        - None: if error/transient (do not cache)
+        """
         url = f"{self.base_url}/organizations/{namespace}"
         try:
-            response = self._make_request("GET", url)
-            if response.status_code == 200:
-                return response.json()
+            # Request without Auth headers to match public view behavior if needed,
+            # or keep auth if user token has access?
+            # User instruction: "optional headers override (damit du Org/User ohne Token abfragen kannst)"
+            # And usage: "self._make_request('GET', url, headers={})"
+            resp = self._make_request("GET", url, headers={})
+            if resp is None:
+                return None
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code == 404:
+                return {} # Explicit empty dict = Not Found
+
+            logger.warning(f"Org lookup unexpected status {resp.status_code} for {namespace}")
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Org lookup failed for {namespace}: {e}")
             return None
 
     def get_user_overview(self, namespace):
-        """Fetches user details."""
+        """
+        Returns:
+        - dict: if User exists (200)
+        - {}: if User not found (404) -> 'Not a User'
+        - None: if error/transient
+        """
         url = f"{self.base_url}/users/{namespace}/overview"
         try:
-            response = self._make_request("GET", url)
-            if response.status_code == 200:
-                return response.json()
+            resp = self._make_request("GET", url, headers={}) # Without Auth
+            if resp is None:
+                return None
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code == 404:
+                return {}
+
+            logger.warning(f"User lookup unexpected status {resp.status_code} for {namespace}")
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"User lookup failed for {namespace}: {e}")
             return None

@@ -27,3 +27,7 @@ MAX_PARAMS_BILLIONS = 40.0
 
 # Explicit Exclusions
 EXCLUDED_NAMESPACES = {"thireus"}
+
+# Reporting Filters
+MIN_SPECIALIST_SCORE = 6
+EXCLUDE_REVIEW_REQUIRED = True

@@ -127,7 +127,7 @@ class Database:
             data.get('num_followers'),
             data.get('is_pro'),
             data.get('created_at'),
-            datetime.now(timezone.utc),
+            datetime.now(timezone.utc).isoformat(),
             json.dumps(data.get('raw_json'))
         ))
         conn.commit()

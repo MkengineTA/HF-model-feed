@@ -111,6 +111,9 @@ def main():
 
     processed_models = []
 
+    # In-Run Author Cache
+    author_run_cache = {}
+
     for model_id, model_info, reason in processing_queue:
         logger.info(f"Processing {model_id} ({reason})...")
 
@@ -125,75 +128,80 @@ def main():
         author_kind = 'unknown'
 
         if namespace:
-            auth_entry = db.get_author(namespace)
-
-            cache_valid = False
-            if auth_entry:
-                last_checked = dateutil.parser.parse(str(auth_entry['last_checked']))
-                age_days = (datetime.now(timezone.utc) - last_checked).days
-                kind = auth_entry['kind']
-
-                # Only cache 'user' and 'org' for 14 days
-                if kind in ('user', 'org') and age_days < 14:
-                    cache_valid = True
-
-                # 'unknown' is always invalid (re-check)
-                if kind == 'unknown':
-                    cache_valid = False
-
-            auth_data = None
-            if not cache_valid:
-                logger.info(f"Validating author: {namespace}")
-                org_data = hf_client.get_org_details(namespace)
-
-                # org_data can be {} (if 404/Unknown) or None (Transient Error)
-                # We need to distinguish inside hf_client, but currently it returns None on error or {}?
-                # Actually, `get_org_details` logic needs to be robust.
-                # Assuming updated hf_client will return explicit signal or we handle it here.
-                # Current plan: Update hf_client next.
-                # If org_data is truthy (dict with content), it's Org.
-
-                if org_data:
-                    author_kind = 'org'
-                    auth_data = {'namespace': namespace, 'kind': 'org', 'raw_json': org_data}
-                    db.upsert_author(auth_data)
-                elif org_data is not None: # Not None means 404 (Not Found), so check User
-                    # Check User
-                    user_data = hf_client.get_user_overview(namespace)
-                    if user_data:
-                        author_kind = 'user'
-                        auth_data = {
-                            'namespace': namespace,
-                            'kind': 'user',
-                            'num_followers': user_data.get('numFollowers'),
-                            'is_pro': 1 if user_data.get('isPro') else 0,
-                            'created_at': user_data.get('createdAt'),
-                            'raw_json': user_data
-                        }
-                        db.upsert_author(auth_data)
-                    elif user_data is not None: # 404 on User too -> Unknown
-                        author_kind = 'unknown'
-                        auth_data = {'namespace': namespace, 'kind': 'unknown', 'raw_json': {}}
-                        db.upsert_author(auth_data)
-                    else:
-                        # User check Failed (Transient) -> Do not cache unknown, just use unknown for now
-                        author_kind = 'unknown'
-                else:
-                    # Org check Failed (Transient) -> Do not cache
-                    author_kind = 'unknown'
+            # Check In-Run Cache
+            if namespace in author_run_cache:
+                author_kind, auth_data, trust_tier = author_run_cache[namespace]
             else:
-                author_kind = auth_entry['kind']
-                auth_data = dict(auth_entry)
+                auth_entry = db.get_author(namespace)
+                auth_data = None
+                cache_valid = False
 
-            if author_kind == 'org':
-                trust_tier = 3
-            elif author_kind == 'user' and auth_data:
-                followers = auth_data.get('num_followers') or 0
-                is_pro = auth_data.get('is_pro') or 0
-                if followers >= 200 or is_pro:
-                    trust_tier = 2
+                if auth_entry:
+                    last_checked = dateutil.parser.parse(str(auth_entry['last_checked']))
+                    age_days = (datetime.now(timezone.utc) - last_checked).days
+                    kind_db = auth_entry['kind']
+
+                    if kind_db in ('user', 'org') and age_days < 14:
+                        cache_valid = True
+
+                    # Unknown is NOT valid cache (unless recent, but user said 'never cache_valid' logic)
+                    if kind_db == 'unknown':
+                        cache_valid = False
+
+                if not cache_valid:
+                    logger.info(f"Validating author: {namespace}")
+
+                    # Tri-State Check: Org
+                    org_data = hf_client.get_org_details(namespace) # returns dict/{} or None
+
+                    if org_data: # Truthy dict -> Org exists
+                        author_kind = 'org'
+                        auth_data = {'namespace': namespace, 'kind': 'org', 'raw_json': org_data}
+                        db.upsert_author(auth_data)
+                    elif org_data == {}: # 404 -> Not an Org -> Check User
+                        # Check User
+                        user_data = hf_client.get_user_overview(namespace) # dict/{} or None
+
+                        if user_data: # Truthy -> User exists
+                            author_kind = 'user'
+                            auth_data = {
+                                'namespace': namespace,
+                                'kind': 'user',
+                                'num_followers': user_data.get('numFollowers'),
+                                'is_pro': 1 if user_data.get('isPro') else 0,
+                                'created_at': user_data.get('createdAt'),
+                                'raw_json': user_data
+                            }
+                            db.upsert_author(auth_data)
+                        elif user_data == {}: # 404 -> Not User either -> Unknown (Deleted?)
+                            author_kind = 'unknown'
+                            auth_data = {'namespace': namespace, 'kind': 'unknown', 'raw_json': {}}
+                            db.upsert_author(auth_data)
+                        else: # None (Transient Error on User)
+                            # Do not cache unknown! Use 'unknown' for this run but don't DB write
+                            author_kind = 'unknown'
+                            auth_data = None # Or partial
+                    else: # None (Transient Error on Org)
+                        # Do not cache
+                        author_kind = 'unknown'
+                        auth_data = None
                 else:
-                    trust_tier = 1
+                    author_kind = auth_entry['kind']
+                    auth_data = dict(auth_entry)
+
+                # Determine Tier
+                if author_kind == 'org':
+                    trust_tier = 3
+                elif author_kind == 'user' and auth_data:
+                    followers = auth_data.get('num_followers') or 0
+                    is_pro = auth_data.get('is_pro') or 0
+                    if followers >= 200 or is_pro:
+                        trust_tier = 2
+                    else:
+                        trust_tier = 1
+
+                # Update Run Cache
+                author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
         logger.info(f"Author: {namespace} | Kind: {author_kind} | Tier: {trust_tier}")
 
@@ -209,7 +217,7 @@ def main():
         if filters.is_generative_visual(model_info, tags):
             filter_trace.append("skip:generative_visual")
 
-        if filters.is_excluded_content(model_id, tags): # Now checks strict NSFW
+        if filters.is_excluded_content(model_id, tags):
             filter_trace.append("skip:nsfw_excluded")
 
         if filters.is_export_or_conversion(model_id, tags, file_details):
@@ -266,10 +274,8 @@ def main():
         else: # Org / Strong User
             # Even for Orgs, skip explicit boilerplate/more info needed
             if is_boilerplate or has_more_info:
-                # Log actual tier kind in message
                 logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded ({author_kind} Tier {trust_tier})")
                 continue
-
             if is_roleplay:
                 pass
 
@@ -314,10 +320,32 @@ def main():
             'report_notes': f"Evidence check: {'Passed' if final_status=='processed' else 'Failed'}" if llm_result else "LLM Failed"
         }
 
+        # New Strict Filter for Inclusion
+        min_score = getattr(config, "MIN_SPECIALIST_SCORE", 0)
+        exclude_review = getattr(config, "EXCLUDE_REVIEW_REQUIRED", False)
+
+        score = (llm_result or {}).get("specialist_score", 0) or 0
+
+        # We save to DB anyway to track status, but we only add to processed_models (which triggers Report/Email) if criteria met?
+        # User said: "Nur in processed_models aufnehmen, wenn..."
+        # And "Akzeptanzkriterium: Modelle mit Score 1/10 tauchen nicht mehr im Mail-Report auf."
+        # If we don't save to DB, it might be re-processed next time?
+        # No, we should save state "processed" but low score.
+        # processed_models is used for Reporting.
+
         if final_status != 'error':
-            processed_models.append(model_data)
             if not args.dry_run:
                 db.save_model(model_data)
+
+            # Filter for Report
+            keep_for_report = True
+            if exclude_review and final_status != "processed":
+                keep_for_report = False
+            if score < min_score:
+                keep_for_report = False
+
+            if keep_for_report:
+                processed_models.append(model_data)
 
     if processed_models:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")

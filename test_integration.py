@@ -121,7 +121,7 @@ class TestIntegration(unittest.TestCase):
             "confidence": "high",
             "unknowns": [],
             "evidence": [
-                {"claim": "test", "quote": "evidence quote here"}
+                {"claim": "test", "quote": "Detailed readme content"}
             ]
         }
 
