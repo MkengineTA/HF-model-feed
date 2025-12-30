@@ -117,7 +117,6 @@ def main():
         # --- Author / Namespace Logic ---
         namespace = model_id.split('/')[0] if '/' in model_id else None
 
-        # Check excluded namespaces
         if namespace in getattr(config, "EXCLUDED_NAMESPACES", set()):
             logger.info(f"Skipping {model_id}: Excluded namespace {namespace}")
             continue
@@ -131,18 +130,35 @@ def main():
             cache_valid = False
             if auth_entry:
                 last_checked = dateutil.parser.parse(str(auth_entry['last_checked']))
-                if (datetime.now(timezone.utc) - last_checked).days < 14:
+                age_days = (datetime.now(timezone.utc) - last_checked).days
+                kind = auth_entry['kind']
+
+                # Only cache 'user' and 'org' for 14 days
+                if kind in ('user', 'org') and age_days < 14:
                     cache_valid = True
+
+                # 'unknown' is always invalid (re-check)
+                if kind == 'unknown':
+                    cache_valid = False
 
             auth_data = None
             if not cache_valid:
                 logger.info(f"Validating author: {namespace}")
                 org_data = hf_client.get_org_details(namespace)
+
+                # org_data can be {} (if 404/Unknown) or None (Transient Error)
+                # We need to distinguish inside hf_client, but currently it returns None on error or {}?
+                # Actually, `get_org_details` logic needs to be robust.
+                # Assuming updated hf_client will return explicit signal or we handle it here.
+                # Current plan: Update hf_client next.
+                # If org_data is truthy (dict with content), it's Org.
+
                 if org_data:
                     author_kind = 'org'
                     auth_data = {'namespace': namespace, 'kind': 'org', 'raw_json': org_data}
                     db.upsert_author(auth_data)
-                else:
+                elif org_data is not None: # Not None means 404 (Not Found), so check User
+                    # Check User
                     user_data = hf_client.get_user_overview(namespace)
                     if user_data:
                         author_kind = 'user'
@@ -155,10 +171,16 @@ def main():
                             'raw_json': user_data
                         }
                         db.upsert_author(auth_data)
-                    else:
+                    elif user_data is not None: # 404 on User too -> Unknown
                         author_kind = 'unknown'
                         auth_data = {'namespace': namespace, 'kind': 'unknown', 'raw_json': {}}
                         db.upsert_author(auth_data)
+                    else:
+                        # User check Failed (Transient) -> Do not cache unknown, just use unknown for now
+                        author_kind = 'unknown'
+                else:
+                    # Org check Failed (Transient) -> Do not cache
+                    author_kind = 'unknown'
             else:
                 author_kind = auth_entry['kind']
                 auth_data = dict(auth_entry)
@@ -244,7 +266,8 @@ def main():
         else: # Org / Strong User
             # Even for Orgs, skip explicit boilerplate/more info needed
             if is_boilerplate or has_more_info:
-                logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded (Org Tier {trust_tier})")
+                # Log actual tier kind in message
+                logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded ({author_kind} Tier {trust_tier})")
                 continue
 
             if is_roleplay:
