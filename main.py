@@ -14,7 +14,7 @@ from hf_client import HFClient
 from llm_client import LLMClient
 from reporter import Reporter
 from mailer import Mailer
-import filters
+import model_filters as filters
 
 # Setup logging
 logger = setup_logging()
@@ -155,7 +155,8 @@ def main():
                         db.upsert_author(auth_data)
             else:
                 author_kind = auth_entry['kind']
-                auth_data = auth_entry
+                # Convert sqlite3.Row to dict to allow .get()
+                auth_data = dict(auth_entry)
 
             if author_kind == 'org':
                 trust_tier = 3
@@ -233,7 +234,6 @@ def main():
         else: # Org / Strong User
             if is_roleplay:
                 # Orgs doing RP? Allow analysis but maybe flag?
-                # Assume if Org does it, it might be relevant (e.g. creative writing model)
                 pass
             if is_boilerplate:
                 final_status = 'review_required'

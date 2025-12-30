@@ -10,7 +10,7 @@ sys.path.append(os.getcwd())
 
 import main
 import config
-import filters
+import model_filters as filters
 
 class TestIntegration(unittest.TestCase):
 
@@ -19,8 +19,8 @@ class TestIntegration(unittest.TestCase):
     @patch('main.LLMClient')
     @patch('main.Reporter')
     @patch('main.Mailer')
-    @patch('filters.extract_parameter_count')
-    @patch('filters.is_secure')
+    @patch('model_filters.extract_parameter_count')
+    @patch('model_filters.is_secure')
     @patch('builtins.open', new_callable=mock_open, read_data="# Report Content")
     def test_full_flow(self, mock_file, mock_is_secure, mock_extract_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
         # Setup Mocks

@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-import filters
+import model_filters as filters
 from llm_client import LLMClient, extract_json_from_text
 
 class TestFilters(unittest.TestCase):
