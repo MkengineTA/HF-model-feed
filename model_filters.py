@@ -65,7 +65,6 @@ RP_KEYWORDS = ["roleplay", "rp", "storytelling", "uncensored", "abliterated", "e
 QUANT_NAME_PATTERNS = [
     re.compile(r'(^|[-_])(I|T)Q\d(_[A-Z0-9]+)*($|[-_])', re.IGNORECASE),
     re.compile(r'(^|[-_])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_])', re.IGNORECASE),
-    re.compile(r'(^|[-_])BF16($|[-_])', re.IGNORECASE),
 ]
 
 # --- Helpers ---
