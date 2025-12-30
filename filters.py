@@ -58,6 +58,7 @@ QUANT_TAGS = {"quantized", "gguf", "gptq", "awq", "bnb-4bit", "int8", "int4"}
 MERGE_KEYWORDS = ["merge", "merged", "mergekit", "model_stock", "ties", "slerp", "dare"]
 
 NSFW_KEYWORDS = ["porn", "explicit", "nude", "sex", "hentai", "erotic", "nsfw", "adult"]
+RP_KEYWORDS = ["roleplay", "rp", "storytelling", "uncensored", "abliterated", "erotica"]
 
 # --- Helpers ---
 
@@ -66,11 +67,6 @@ def get_pipeline_tag(model_info) -> str:
             getattr(model_info, "pipelineTag", None) or "").lower()
 
 def extract_parameter_count(model_info, file_details=None):
-    """
-    Extracts parameter count.
-    Supported formats in name: 7B, 1.5b, 270m, 1100M.
-    """
-    # 1. Metadata check
     try:
         if hasattr(model_info, 'safetensors') and model_info.safetensors:
             total = None
@@ -80,17 +76,13 @@ def extract_parameter_count(model_info, file_details=None):
     except Exception:
         pass
 
-    # 2. Regex Fallback
     mid = model_info.id
-    # B/b match
     match_b = re.search(r'(\d+(?:\.\d+)?)[Bb]', mid)
     if match_b: return float(match_b.group(1))
 
-    # M/m match (e.g. 270m -> 0.27B)
     match_m = re.search(r'(\d+(?:\.\d+)?)[Mm]', mid)
     if match_m: return float(match_m.group(1)) / 1000.0
 
-    # 3. File Size Proxy (approx FP16: 2GB ~ 1B)
     if file_details:
         total_size = 0
         exts = ['.safetensors', '.bin', '.pt', '.pth', '.msgpack', '.h5']
@@ -110,7 +102,6 @@ def is_generative_visual(model_info, tags, readme_text: str | None = None):
     if pt in GENERATIVE_PIPELINES: return True
     if tagset & GENERATIVE_TAGS: return True
     if any(k in text for k in GENERATIVE_KEYWORDS): return True
-    # File-based hint could be added here if passed (e.g. comfyui folder)
     return False
 
 def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None):
@@ -118,38 +109,27 @@ def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None):
     tagset = {t.lower() for t in (tags or [])}
     text = (readme_text or "").lower()
 
-    # Whitelist Check
     if pt in VQA_PIPELINES or pt in VISION_INSPECTION_PIPELINES: return False
     if tagset & VQA_TAGS: return False
     if any(k in text for k in VQA_KEYWORDS): return False
     if any(x in text for x in ["inspection", "defect", "anomaly", "quality", "qa", "visual inspection"]): return False
 
-    # Blacklist Check
     if tagset & ROBOTICS_TAGS: return True
     if any(k in text for k in ROBOTICS_KEYWORDS): return True
     return False
 
 def is_export_or_conversion(model_id, tags, file_details=None):
-    """Bundles ONNX, OpenVINO, GGUF, GPTQ, AWQ checks."""
     mid = model_id.lower()
     tagset = {t.lower() for t in (tags or [])}
-
-    # 1. Tags
     if tagset & EXPORT_TAGS: return True
     if tagset & QUANT_TAGS: return True
-
-    # 2. Name
-    if any(k in mid for k in ["onnx", "openvino", "tensorrt", "coreml", "tflite", "gguf", "gptq", "awq", "exl2"]):
-        return True
-
-    # 3. Files
+    if any(k in mid for k in ["onnx", "openvino", "tensorrt", "coreml", "tflite", "gguf", "gptq", "awq", "exl2"]): return True
     if file_details:
         for f in file_details:
             p = (f.get('path') or "").lower()
             if p.endswith((".onnx", ".tflite", ".engine", ".xml", ".gguf", ".awq", ".gptq")):
                 return True
             if "/openvino/" in p: return True
-
     return False
 
 def is_merge(model_id, readme_text):
@@ -162,10 +142,20 @@ def is_merge(model_id, readme_text):
 def is_nsfw(model_id, tags, readme_text=None):
     tagset = {t.lower() for t in (tags or [])}
     if "nsfw" in tagset: return True
-
     txt = (model_id + " " + (readme_text or "")).lower()
     if any(k in txt for k in NSFW_KEYWORDS): return True
     return False
+
+def is_roleplay(model_id, tags):
+    tagset = {t.lower() for t in (tags or [])}
+    txt = model_id.lower()
+    if any(k in txt for k in RP_KEYWORDS): return True
+    if any(k in t for t in tagset for k in RP_KEYWORDS): return True
+    return False
+
+# Backward compatibility / Combined check if needed
+def is_excluded_content(model_id, tags):
+    return is_nsfw(model_id, tags)
 
 def is_boilerplate_readme(readme: str) -> bool:
     t = (readme or "").lower()
@@ -182,18 +172,12 @@ def is_boilerplate_readme(readme: str) -> bool:
 def compute_info_score(readme, yaml_meta, tags, links_present):
     score = 0
     txt = (readme or "").lower()
-
     if yaml_meta: score += 1
     if yaml_meta and ('base_model' in yaml_meta or 'base_model' in txt): score += 1
     if yaml_meta and ('datasets' in yaml_meta or 'dataset' in txt): score += 1
     if yaml_meta and ('license' in yaml_meta or 'license' in txt): score += 1
-
-    # Pipeline tag check (we assume caller passes relevant info or we check meta)
-    # Using simplistic check on tags
     if tags and len(tags) > 2: score += 1
-
     if links_present: score += 1
-
     return score
 
 def is_secure(file_details):

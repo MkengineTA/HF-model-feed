@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import dateutil.parser
 import yaml
 import re
@@ -122,7 +122,6 @@ def main():
         if namespace:
             auth_entry = db.get_author(namespace)
 
-            # Check cache TTL (14 days)
             cache_valid = False
             if auth_entry:
                 last_checked = dateutil.parser.parse(str(auth_entry['last_checked']))
@@ -131,7 +130,6 @@ def main():
 
             auth_data = None
             if not cache_valid:
-                # Revalidate via API
                 logger.info(f"Validating author: {namespace}")
                 org_data = hf_client.get_org_details(namespace)
                 if org_data:
@@ -159,20 +157,18 @@ def main():
                 author_kind = auth_entry['kind']
                 auth_data = auth_entry
 
-            # Determine Tier
             if author_kind == 'org':
-                trust_tier = 3 # Trusted Org
+                trust_tier = 3
             elif author_kind == 'user' and auth_data:
                 followers = auth_data.get('num_followers') or 0
                 is_pro = auth_data.get('is_pro') or 0
                 if followers >= 200 or is_pro:
-                    trust_tier = 2 # Strong User
+                    trust_tier = 2
                 else:
-                    trust_tier = 1 # Normal User
+                    trust_tier = 1
 
         logger.info(f"Author: {namespace} | Kind: {author_kind} | Tier: {trust_tier}")
 
-        # --- Filter Trace ---
         filter_trace = []
         tags = model_info.tags or []
 
@@ -180,13 +176,12 @@ def main():
         file_details = hf_client.get_model_file_details(model_id)
         if not filters.is_secure(file_details):
             logger.warning(f"Skipping {model_id}: Security check failed")
-            continue # Hard skip, don't even trace? Or trace and save status skipped?
-                     # Standard behavior: skip loop
+            continue
 
         if filters.is_generative_visual(model_info, tags):
             filter_trace.append("skip:generative_visual")
 
-        if filters.is_excluded_content(model_id, tags):
+        if filters.is_excluded_content(model_id, tags): # Now checks strict NSFW
             filter_trace.append("skip:nsfw_excluded")
 
         if filters.is_export_or_conversion(model_id, tags, file_details):
@@ -197,10 +192,8 @@ def main():
         if params_est and params_est > config.MAX_PARAMS_BILLIONS:
             filter_trace.append(f"skip:params_too_large_{params_est:.1f}B")
 
-        # Skip if any hard filters hit
         if filter_trace:
             logger.info(f"Skipping {model_id}: {filter_trace}")
-            # Optional: save as skipped?
             continue
 
         # --- Phase 2: README Validation ---
@@ -222,21 +215,28 @@ def main():
         links_present = filters.has_external_links(readme_content)
         info_score = filters.compute_info_score(readme_content, yaml_meta, tags, links_present)
         is_boilerplate = filters.is_boilerplate_readme(readme_content)
+        is_roleplay = filters.is_roleplay(model_id, tags)
 
         final_status = 'processed'
-
         should_skip_quality = False
 
-        if trust_tier <= 1: # User
-            if is_boilerplate:
+        if trust_tier <= 1: # Normal User
+            if is_roleplay:
+                should_skip_quality = True
+                filter_trace.append("skip:roleplay_content")
+            elif is_boilerplate:
                 should_skip_quality = True
                 filter_trace.append("skip:boilerplate_readme")
             elif info_score < 3 and not links_present:
                 should_skip_quality = True
                 filter_trace.append("skip:low_info_score")
         else: # Org / Strong User
+            if is_roleplay:
+                # Orgs doing RP? Allow analysis but maybe flag?
+                # Assume if Org does it, it might be relevant (e.g. creative writing model)
+                pass
             if is_boilerplate:
-                final_status = 'review_required' # Soften for Orgs
+                final_status = 'review_required'
 
         if should_skip_quality:
             logger.info(f"Skipping {model_id}: Quality Gate Failed ({filter_trace[-1]})")
@@ -247,15 +247,13 @@ def main():
         llm_result = llm_client.analyze_model(readme_content, tags, yaml_meta=yaml_meta, file_summary=file_details)
 
         if llm_result:
-            # Post-Validation (Evidence)
             evidence = llm_result.get('evidence', [])
             for item in evidence:
                 quote = item.get('quote', '')
-                # Simple substring check (could be improved with normalization)
                 if quote and quote not in readme_content:
                     logger.warning(f"Evidence fail: {quote[:30]}...")
                     final_status = 'review_required'
-                    llm_result['confidence'] = 'low' # Downgrade confidence
+                    llm_result['confidence'] = 'low'
         else:
             logger.error(f"LLM analysis failed for {model_id}")
             final_status = 'error'
@@ -286,7 +284,6 @@ def main():
             if not args.dry_run:
                 db.save_model(model_data)
 
-    # Output
     if processed_models:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")
         md_path = reporter.generate_markdown_report(processed_models, date_str=date_str)
