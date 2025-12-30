@@ -26,19 +26,13 @@ class HFClient:
                     logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                     continue
-                # We handle status codes in callers mostly, but raise_for_status handles 4xx/5xx
-                # For tri-state logic (404 check), callers need the response object even if 404.
-                # So we return response object here.
                 return response
             except requests.exceptions.RequestException as e:
-                # requests.request doesn't raise unless network error. HTTP status doesn't raise unless raise_for_status called.
-                # But if network error:
                 if i < max_retries - 1:
                     logger.warning(f"Request failed: {e}. Retrying...")
                     time.sleep(2)
                     continue
-                # If final attempt fails or it's a hard error
-                return None # Return None on network failure
+                return None
         return None
 
     def fetch_new_models(self, since=None, limit=1000):
@@ -128,7 +122,6 @@ class HFClient:
                     return response.json()
                 if response.status_code == 404:
                     return None
-                # Other status codes might be auth or 429
                 response.raise_for_status()
             return None
         except Exception as e:
@@ -153,54 +146,69 @@ class HFClient:
             logger.warning(f"Could not fetch info for {model_id}: {e}")
             return None
 
-    # --- New Author/Org Methods (Tri-State) ---
+    # --- New Author/Org Methods (Tri-State with Avatar Check) ---
 
     def get_org_details(self, namespace):
         """
         Returns:
-        - dict: if Org exists (200)
-        - {}: if Org not found (404) -> 'Not an Org'
-        - None: if error/transient (do not cache)
+        - dict: if Org exists (200) - using avatar endpoint as proxy
+        - {}: if Org not found (404)
+        - None: if error/transient
         """
-        url = f"{self.base_url}/organizations/{namespace}"
+        url = f"{self.base_url}/organizations/{namespace}/avatar"
         try:
-            # Request without Auth headers to match public view behavior if needed,
-            # or keep auth if user token has access?
-            # User instruction: "optional headers override (damit du Org/User ohne Token abfragen kannst)"
-            # And usage: "self._make_request('GET', url, headers={})"
+            # Check avatar without redirects if possible, or just checking 200
+            # Adding redirect=null param might stop redirect if API supports it,
+            # otherwise it redirects to CDN which returns 200 (image).
+            # We just need to know if the endpoint accepts the org name.
             resp = self._make_request("GET", url, headers={})
             if resp is None:
                 return None
-            if resp.status_code == 200:
-                return resp.json()
-            if resp.status_code == 404:
-                return {} # Explicit empty dict = Not Found
 
-            logger.warning(f"Org lookup unexpected status {resp.status_code} for {namespace}")
+            logger.debug(f"Org check {namespace}: {resp.status_code}")
+
+            if resp.status_code == 200:
+                # It exists. Return dummy dict or parse if JSON
+                # Avatar endpoint usually returns image bytes if existing?
+                # Or JSON if using API?
+                # User said: "response.json() # e.g. {'avatarUrl': ...}"
+                # Let's try .json(), if fails assume image -> exists.
+                try:
+                    return resp.json()
+                except:
+                    return {"exists": True}
+
+            if resp.status_code == 404:
+                return {} # Definite not found
+
+            logger.warning(f"Org check unexpected status {resp.status_code} for {namespace}")
             return None
         except Exception as e:
-            logger.warning(f"Org lookup failed for {namespace}: {e}")
+            logger.warning(f"Org check failed for {namespace}: {e}")
             return None
 
     def get_user_overview(self, namespace):
         """
         Returns:
         - dict: if User exists (200)
-        - {}: if User not found (404) -> 'Not a User'
+        - {}: if User not found (404)
         - None: if error/transient
         """
         url = f"{self.base_url}/users/{namespace}/overview"
         try:
-            resp = self._make_request("GET", url, headers={}) # Without Auth
+            resp = self._make_request("GET", url, headers={})
             if resp is None:
                 return None
+
+            logger.debug(f"User check {namespace}: {resp.status_code}")
+
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code == 404:
                 return {}
 
-            logger.warning(f"User lookup unexpected status {resp.status_code} for {namespace}")
+            logger.warning(f"User check unexpected status {resp.status_code} for {namespace}")
             return None
         except Exception as e:
-            logger.warning(f"User lookup failed for {namespace}: {e}")
+            logger.warning(f"User check failed for {namespace}: {e}")
             return None

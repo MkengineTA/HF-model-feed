@@ -144,7 +144,7 @@ def main():
                     if kind_db in ('user', 'org') and age_days < 14:
                         cache_valid = True
 
-                    # Unknown is NOT valid cache (unless recent, but user said 'never cache_valid' logic)
+                    # Unknown is NOT valid cache (unless recent, but we force re-check)
                     if kind_db == 'unknown':
                         cache_valid = False
 
@@ -180,7 +180,7 @@ def main():
                         else: # None (Transient Error on User)
                             # Do not cache unknown! Use 'unknown' for this run but don't DB write
                             author_kind = 'unknown'
-                            auth_data = None # Or partial
+                            auth_data = None
                     else: # None (Transient Error on Org)
                         # Do not cache
                         author_kind = 'unknown'
@@ -276,6 +276,7 @@ def main():
             if is_boilerplate or has_more_info:
                 logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded ({author_kind} Tier {trust_tier})")
                 continue
+
             if is_roleplay:
                 pass
 
@@ -325,13 +326,6 @@ def main():
         exclude_review = getattr(config, "EXCLUDE_REVIEW_REQUIRED", False)
 
         score = (llm_result or {}).get("specialist_score", 0) or 0
-
-        # We save to DB anyway to track status, but we only add to processed_models (which triggers Report/Email) if criteria met?
-        # User said: "Nur in processed_models aufnehmen, wenn..."
-        # And "Akzeptanzkriterium: Modelle mit Score 1/10 tauchen nicht mehr im Mail-Report auf."
-        # If we don't save to DB, it might be re-processed next time?
-        # No, we should save state "processed" but low score.
-        # processed_models is used for Reporting.
 
         if final_status != 'error':
             if not args.dry_run:

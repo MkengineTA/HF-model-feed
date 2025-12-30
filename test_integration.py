@@ -54,7 +54,9 @@ class TestIntegration(unittest.TestCase):
         mock_hf_instance = MockHFClient.return_value
 
         # Author details
-        mock_hf_instance.get_org_details.side_effect = lambda ns: {'id': 'org1'} if ns == 'trending' else None
+        # trending -> Org (exists)
+        # new -> Not Org (404), User (exists)
+        mock_hf_instance.get_org_details.side_effect = lambda ns: {'id': 'org1'} if ns == 'trending' else {} if ns == 'new' else None
         mock_hf_instance.get_user_overview.side_effect = lambda ns: {'numFollowers': 50, 'isPro': False} if ns == 'new' else None
 
         # Models
