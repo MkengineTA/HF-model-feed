@@ -50,6 +50,10 @@ class TestFilters(unittest.TestCase):
         self.assertTrue(filters.is_export_or_conversion("model-onnx", []))
         self.assertTrue(filters.is_export_or_conversion("model", ["gguf"]))
         self.assertFalse(filters.is_export_or_conversion("clean-model", []))
+        # Test Regex Quantization
+        self.assertTrue(filters.is_export_or_conversion("Model-IQ6_K", []))
+        self.assertTrue(filters.is_export_or_conversion("Model-Q4_K_M", []))
+        self.assertTrue(filters.is_export_or_conversion("Model-BF16", []))
 
     def test_is_merge(self):
         self.assertTrue(filters.is_merge("user/merged-model", ""))

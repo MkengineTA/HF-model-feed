@@ -17,10 +17,11 @@ class Reporter:
 
         for m in models:
             analysis = m.get('llm_analysis')
+            status = m.get('status')
 
-            if analysis:
+            if analysis and status == 'processed':
                 processed_list.append(m)
-            elif m.get('status') == 'review_required':
+            elif status == 'review_required':
                  review_required.append(m)
 
         # Sort processed list by specialist_score DESC

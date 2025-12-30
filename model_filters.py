@@ -61,6 +61,13 @@ MERGE_KEYWORDS = ["merge", "merged", "mergekit", "model_stock", "ties", "slerp",
 NSFW_KEYWORDS = ["porn", "explicit", "nude", "sex", "hentai", "erotic", "nsfw", "adult"]
 RP_KEYWORDS = ["roleplay", "rp", "storytelling", "uncensored", "abliterated", "erotica"]
 
+# Regex for Quantization naming
+QUANT_NAME_PATTERNS = [
+    re.compile(r'(^|[-_])(I|T)Q\d(_[A-Z0-9]+)*($|[-_])', re.IGNORECASE),
+    re.compile(r'(^|[-_])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_])', re.IGNORECASE),
+    re.compile(r'(^|[-_])BF16($|[-_])', re.IGNORECASE),
+]
+
 # --- Helpers ---
 
 def get_pipeline_tag(model_info) -> str:
@@ -119,9 +126,16 @@ def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None):
     if any(k in text for k in ROBOTICS_KEYWORDS): return True
     return False
 
+def has_quant_in_name(model_id: str) -> bool:
+    mid = (model_id or "")
+    return any(p.search(mid) for p in QUANT_NAME_PATTERNS)
+
 def is_export_or_conversion(model_id, tags, file_details=None):
     mid = model_id.lower()
     tagset = {t.lower() for t in (tags or [])}
+
+    if has_quant_in_name(model_id): return True
+
     if tagset & EXPORT_TAGS: return True
     if tagset & QUANT_TAGS: return True
     if any(k in mid for k in ["onnx", "openvino", "tensorrt", "coreml", "tflite", "gguf", "gptq", "awq", "exl2"]): return True
@@ -154,7 +168,6 @@ def is_roleplay(model_id, tags):
     if any(k in t for t in tagset for k in RP_KEYWORDS): return True
     return False
 
-# Backward compatibility / Combined check if needed
 def is_excluded_content(model_id, tags):
     return is_nsfw(model_id, tags)
 
@@ -170,25 +183,27 @@ def is_boilerplate_readme(readme: str) -> bool:
     ]
     return any(b in t for b in bad)
 
+def has_more_info_needed(readme: str) -> bool:
+    return "[more information needed]" in (readme or "").lower()
+
+def is_empty_or_stub_readme(readme: str) -> bool:
+    t = (readme or "").strip()
+    if not t: return True
+    if "README.md exists but content is empty" in t: return True
+    return False
+
 def compute_info_score(readme, yaml_meta, tags, links_present):
     score = 0
     txt = (readme or "").lower()
-
     if yaml_meta: score += 1
-
-    # Check text OR yaml
     has_base = (yaml_meta and 'base_model' in yaml_meta) or ('base_model' in txt)
     if has_base: score += 1
-
     has_dataset = (yaml_meta and 'datasets' in yaml_meta) or ('dataset' in txt)
     if has_dataset: score += 1
-
     has_license = (yaml_meta and 'license' in yaml_meta) or ('license' in txt)
     if has_license: score += 1
-
     if tags and len(tags) > 2: score += 1
     if links_present: score += 1
-
     return score
 
 def is_secure(file_details):
@@ -202,26 +217,17 @@ def is_secure(file_details):
     return True
 
 def has_external_links(readme: str) -> bool:
-    """
-    True if README contains external http(s) links (not huggingface.co).
-    """
     if not readme:
         return False
-
     urls = re.findall(r"https?://[^\s)\]}>]+", readme)
-
     for u in urls:
         try:
             host = urlparse(u).netloc.lower()
         except Exception:
             continue
-
         if not host:
             continue
-
         if host.endswith("huggingface.co") or host == "hf.co" or host.endswith(".hf.co"):
             continue
-
         return True
-
     return False

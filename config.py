@@ -24,3 +24,6 @@ RECEIVER_MAIL = os.getenv("RECEIVER_MAIL")
 
 # Parameter thresholds
 MAX_PARAMS_BILLIONS = 40.0
+
+# Explicit Exclusions
+EXCLUDED_NAMESPACES = {"thireus"}

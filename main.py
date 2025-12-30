@@ -116,6 +116,12 @@ def main():
 
         # --- Author / Namespace Logic ---
         namespace = model_id.split('/')[0] if '/' in model_id else None
+
+        # Check excluded namespaces
+        if namespace in getattr(config, "EXCLUDED_NAMESPACES", set()):
+            logger.info(f"Skipping {model_id}: Excluded namespace {namespace}")
+            continue
+
         trust_tier = 1 # Default: Normal User
         author_kind = 'unknown'
 
@@ -155,7 +161,6 @@ def main():
                         db.upsert_author(auth_data)
             else:
                 author_kind = auth_entry['kind']
-                # Convert sqlite3.Row to dict to allow .get()
                 auth_data = dict(auth_entry)
 
             if author_kind == 'org':
@@ -203,6 +208,10 @@ def main():
             logger.info(f"Skipping {model_id}: No README")
             continue
 
+        if filters.is_empty_or_stub_readme(readme_content):
+            logger.info(f"Skipping {model_id}: Empty/Stub README")
+            continue
+
         if filters.is_merge(model_id, readme_content):
             logger.info(f"Skipping {model_id}: Merge model")
             continue
@@ -216,6 +225,7 @@ def main():
         links_present = filters.has_external_links(readme_content)
         info_score = filters.compute_info_score(readme_content, yaml_meta, tags, links_present)
         is_boilerplate = filters.is_boilerplate_readme(readme_content)
+        has_more_info = filters.has_more_info_needed(readme_content)
         is_roleplay = filters.is_roleplay(model_id, tags)
 
         final_status = 'processed'
@@ -225,18 +235,20 @@ def main():
             if is_roleplay:
                 should_skip_quality = True
                 filter_trace.append("skip:roleplay_content")
-            elif is_boilerplate:
+            elif is_boilerplate or has_more_info:
                 should_skip_quality = True
                 filter_trace.append("skip:boilerplate_readme")
             elif info_score < 3 and not links_present:
                 should_skip_quality = True
                 filter_trace.append("skip:low_info_score")
         else: # Org / Strong User
+            # Even for Orgs, skip explicit boilerplate/more info needed
+            if is_boilerplate or has_more_info:
+                logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded (Org Tier {trust_tier})")
+                continue
+
             if is_roleplay:
-                # Orgs doing RP? Allow analysis but maybe flag?
                 pass
-            if is_boilerplate:
-                final_status = 'review_required'
 
         if should_skip_quality:
             logger.info(f"Skipping {model_id}: Quality Gate Failed ({filter_trace[-1]})")
