@@ -36,13 +36,18 @@ class Reporter:
 
                     # Fields
                     name = m['name']
+                    # Escape name for Markdown display (e.g. backticks)
+                    name_disp = f"`{name}`"
                     link = f"https://huggingface.co/{m['id']}"
 
+                    params = a.get('params_m')
+                    params_str = f"{params}M" if params else "Unknown"
+
                     # Metadata Header
-                    f.write(f"## [{name}]({link})\n")
+                    f.write(f"## [{name_disp}]({link})\n")
                     f.write(f"**Typ:** {a.get('model_type', 'N/A')} | ")
                     f.write(f"**Score:** {a.get('specialist_score', 0)}/10 | ")
-                    f.write(f"**Params:** {a.get('params_m', 'N/A')}M\n\n")
+                    f.write(f"**Params:** {params_str}\n\n")
 
                     # Blurb
                     f.write(f"> {a.get('newsletter_blurb', 'Keine Beschreibung verfügbar.')}\n\n")
@@ -93,7 +98,17 @@ class Reporter:
                     # Footer
                     confidence = a.get('confidence', 'low')
                     conf_icon = "🟢" if confidence == 'high' else "🟡" if confidence == 'medium' else "🔴"
-                    f.write(f"_{conf_icon} Confidence: {confidence} | Unknowns: {', '.join(a.get('unknowns', []))}_\n")
+                    unknowns = a.get('unknowns', [])
+                    unknowns_str = ', '.join(unknowns) if unknowns else "None"
+                    f.write(f"_{conf_icon} Confidence: {confidence} | Unknowns: {unknowns_str}_\n")
+
+                    # Evidence (Debug/Verify) - Optional, maybe collapse? No markdown collapse in email usually.
+                    # Just listing it small.
+                    evidence = a.get('evidence', [])
+                    if evidence:
+                        f.write("\n_Evidence Check:_\n")
+                        for e in evidence:
+                            f.write(f"- _{e.get('claim', '')}_ -> \"{e.get('quote', '')[:50]}...\"\n")
 
                     f.write("---\n\n")
             else:
@@ -102,7 +117,9 @@ class Reporter:
             f.write("## 🔍 Review Required (Dünne Doku, Externe Links)\n\n")
             if review_required:
                 for m in review_required:
-                    f.write(f"- [{m['name']}](https://huggingface.co/{m['id']}) - Bitte manuell prüfen.\n")
+                    # Escape name here too
+                    safe_name = f"`{m['name']}`"
+                    f.write(f"- [{safe_name}](https://huggingface.co/{m['id']}) - Bitte manuell prüfen.\n")
             else:
                 f.write("Keine Modelle für manuellen Review.\n\n")
 

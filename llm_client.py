@@ -6,33 +6,22 @@ import logging
 logger = logging.getLogger("EdgeAIScout")
 
 def extract_json_from_text(text):
-    """
-    Extracts JSON object from a string. Handles Markdown code blocks and raw text.
-    Returns None if parsing fails.
-    """
-    # Helper to clean common JSON errors
     def clean_json(json_text):
-        # Remove trailing commas in objects/arrays (simple regex)
-        # Match , followed by whitespace and } or ]
         json_text = re.sub(r',\s*([\]}])', r'\1', json_text)
         return json_text
 
-    # 1. Try fenced code block ```json ... ``` or just ``` ... ```
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         try:
             return json.loads(clean_json(m.group(1)))
         except json.JSONDecodeError:
-            pass # Fallback to method 2
+            pass
 
-    # 2. Fallback: find first '{' and last '}'
     try:
         start_idx = text.find('{')
         end_idx = text.rfind('}')
-
         if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
             return None
-
         json_str = text[start_idx:end_idx+1]
         return json.loads(clean_json(json_str))
     except json.JSONDecodeError:
@@ -48,11 +37,6 @@ class LLMClient:
         self.enable_reasoning = enable_reasoning
 
     def analyze_model(self, readme_content, tags):
-        """
-        Analyzes the model README and tags using the LLM.
-        Returns a dictionary with the analysis results.
-        """
-
         system_prompt = (
             "Du bist ein strenger Analyst für Edge-AI- und Manufacturing-Modelle. "
             "Du darfst NICHTS erfinden. Wenn Informationen im README/Tags nicht klar belegt sind, "
@@ -78,6 +62,7 @@ class LLMClient:
         - manufacturing.use_cases: max 3 Bullets, je max 140 Zeichen.
         - manufacturing.risks: max 2 Bullets, je max 140 Zeichen.
         - unknowns: max 3 Bullets, je max 120 Zeichen.
+        - evidence: genau 2 Einträge.
 
         REGELN:
         - Alles in Deutsch außer enum-Werte.
@@ -115,6 +100,10 @@ class LLMClient:
             "use_cases": ["..."],
             "risks": ["..."]
           }},
+          "evidence": [
+            {{ "claim": "...", "quote": "Original text substring from README" }},
+            {{ "claim": "...", "quote": "Original text substring from README" }}
+          ],
           "specialist_score": 1,
           "confidence": "low",
           "unknowns": ["..."]
@@ -128,22 +117,18 @@ class LLMClient:
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.1,
-            # max_tokens removed
             "stream": False
         }
 
         if self.enable_reasoning:
-            # Add OpenRouter specific "reasoning" block
             payload["reasoning"] = {"enabled": True}
 
-        # Build Headers
         headers = {
             "Content-Type": "application/json"
         }
 
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-
         if self.site_url:
             headers["HTTP-Referer"] = self.site_url
         if self.app_name:
@@ -152,7 +137,6 @@ class LLMClient:
         try:
             response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
             response.raise_for_status()
-
             result = response.json()
             content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
 
@@ -160,7 +144,6 @@ class LLMClient:
             if not analysis:
                 logger.error(f"Failed to parse JSON from LLM response. Raw Content:\n{content[:500]}...\n[Truncated]")
                 return None
-
             return analysis
 
         except requests.exceptions.RequestException as e:

@@ -38,7 +38,7 @@ class Mailer:
                     padding: 20px;
                 }}
                 .container {{
-                    max_width: 700px;
+                    max-width: 700px;
                     margin: 0 auto;
                     background-color: #ffffff;
                     padding: 40px;
