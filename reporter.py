@@ -43,11 +43,15 @@ class Reporter:
                     params = a.get('params_m')
                     params_str = f"{params}M" if params else "Unknown"
 
+                    tier_str = f"Tier {m.get('trust_tier', '?')}"
+                    kind_str = m.get('author_kind', 'unknown')
+
                     # Metadata Header
                     f.write(f"## [{name_disp}]({link})\n")
                     f.write(f"**Typ:** {a.get('model_type', 'N/A')} | ")
                     f.write(f"**Score:** {a.get('specialist_score', 0)}/10 | ")
-                    f.write(f"**Params:** {params_str}\n\n")
+                    f.write(f"**Params:** {params_str} | ")
+                    f.write(f"**Author:** {kind_str} ({tier_str})\n\n")
 
                     # Blurb
                     f.write(f"> {a.get('newsletter_blurb', 'Keine Beschreibung verfügbar.')}\n\n")
@@ -102,8 +106,7 @@ class Reporter:
                     unknowns_str = ', '.join(unknowns) if unknowns else "None"
                     f.write(f"_{conf_icon} Confidence: {confidence} | Unknowns: {unknowns_str}_\n")
 
-                    # Evidence (Debug/Verify) - Optional, maybe collapse? No markdown collapse in email usually.
-                    # Just listing it small.
+                    # Evidence (Debug/Verify)
                     evidence = a.get('evidence', [])
                     if evidence:
                         f.write("\n_Evidence Check:_\n")
@@ -114,12 +117,12 @@ class Reporter:
             else:
                 f.write("Keine Modelle erfolgreich analysiert.\n\n")
 
-            f.write("## 🔍 Review Required (Dünne Doku, Externe Links)\n\n")
+            f.write("## 🔍 Review Required (Dünne Doku, Externe Links, etc.)\n\n")
             if review_required:
                 for m in review_required:
-                    # Escape name here too
                     safe_name = f"`{m['name']}`"
-                    f.write(f"- [{safe_name}](https://huggingface.co/{m['id']}) - Bitte manuell prüfen.\n")
+                    notes = m.get('report_notes', 'N/A')
+                    f.write(f"- [{safe_name}](https://huggingface.co/{m['id']}) - **Grund:** {notes}\n")
             else:
                 f.write("Keine Modelle für manuellen Review.\n\n")
 

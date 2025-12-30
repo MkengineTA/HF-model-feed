@@ -36,53 +36,58 @@ class LLMClient:
         self.app_name = app_name
         self.enable_reasoning = enable_reasoning
 
-    def analyze_model(self, readme_content, tags):
+    def analyze_model(self, readme_content, tags, yaml_meta=None, file_summary=None):
+        """
+        Analyzes the model README, tags, and metadata using the LLM.
+        """
+
+        # Summarize files for context
+        files_ctx = "Unknown"
+        if file_summary:
+            exts = {}
+            for f in file_summary:
+                p = f.get('path', '')
+                ext = p.split('.')[-1] if '.' in p else 'bin'
+                exts[ext] = exts.get(ext, 0) + 1
+            files_ctx = ", ".join([f"{k}: {v}" for k,v in exts.items()])
+
         system_prompt = (
             "Du bist ein strenger Analyst für Edge-AI- und Manufacturing-Modelle. "
-            "Du darfst NICHTS erfinden. Wenn Informationen im README/Tags nicht klar belegt sind, "
-            "setze sie auf null und liste sie unter unknowns; confidence dann 'low' oder 'medium'. "
-            "Gib AUSSCHLIESSLICH valides JSON aus (kein Markdown, kein Text außerhalb JSON). "
-            "Halte Längenlimits strikt ein."
+            "Du darfst NICHTS erfinden. Wenn Informationen nicht klar belegt sind (README/YAML), "
+            "setze sie auf null und liste sie unter unknowns. Confidence sinkt bei fehlenden Belegen. "
+            "Gib AUSSCHLIESSLICH valides JSON aus."
         )
 
         user_prompt = f"""
-        Analysiere das HuggingFace-Modell anhand README + Tags.
+        Analysiere das HuggingFace-Modell.
 
-        HF Tags: {', '.join(tags) if tags else 'None'}
+        METADATEN:
+        - Tags: {', '.join(tags) if tags else 'None'}
+        - YAML Headers: {json.dumps(yaml_meta, indent=2) if yaml_meta else 'None'}
+        - Files Summary: {files_ctx}
 
         README (gekürzt):
         {readme_content[:32000]}
 
         LÄNGENLIMITS (hart):
-        - newsletter_blurb: Prägnante Zusammenfassung, ca. 80-100 Wörter. Satzanzahl flexibel. Fokus auf technischen Kern und Anwendungszweck.
-        - key_facts: genau 3 Einträge, je max 140 Zeichen.
-        - delta.what_changed: max 3 Bullets, je max 140 Zeichen.
-        - delta.why_it_matters: max 3 Bullets, je max 140 Zeichen.
-        - edge.deployment_notes: max 3 Bullets, je max 140 Zeichen.
-        - manufacturing.use_cases: max 3 Bullets, je max 140 Zeichen.
-        - manufacturing.risks: max 2 Bullets, je max 140 Zeichen.
-        - unknowns: max 3 Bullets, je max 120 Zeichen.
-        - evidence: genau 2 Einträge.
+        - newsletter_blurb: Prägnante Zusammenfassung (ca. 80-100 Wörter) auf Deutsch.
+        - key_facts: 3 Einträge, max 140 Zeichen.
+        - delta.what_changed / why_it_matters: je 3 Bullets.
+        - evidence: genau 2-4 Einträge.
 
         REGELN:
-        - Alles in Deutsch außer enum-Werte.
-        - params_m nur setzen, wenn im README/Modellkarte klar genannt; sonst null.
-        - min_vram_gb nur setzen, wenn klar genannt; sonst null.
-        - quantization: nur nennen, wenn explizit erwähnt oder offensichtlich aus Artefakten (z.B. gguf-Dateien) ableitbar; sonst "none".
-        - model_type sauber erkennen: Base Model vs Finetune vs LoRA Adapter.
-        - confidence:
-          - high: Base Model + Training/Delta klar beschrieben
-          - medium: teilweise klar
-          - low: viele unknowns / dünnes README
+        - Sprache: DEUTSCH (außer Enum-Werte).
+        - params_m / min_vram_gb: Nur wenn explizit genannt.
+        - quantization: Prüfe auch Filenamen (gguf/onnx) falls im Text nicht genannt.
+        - Evidence-Pflicht: Für Claims bzgl. Domain/Performance MUSS ein Zitat ("quote") existieren.
 
-        Gib JSON in diesem Format zurück:
-
+        JSON OUTPUT FORMAT:
         {{
           "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
           "base_model": null,
           "params_m": null,
           "modality": "Text" | "Vision" | "Diffusion" | "Multimodal" | "Other",
-          "category": "Vision" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
+          "category": "Inspection" | "VQA" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
           "newsletter_blurb": "...",
           "key_facts": ["...", "...", "..."],
           "delta": {{
@@ -101,11 +106,10 @@ class LLMClient:
             "risks": ["..."]
           }},
           "evidence": [
-            {{ "claim": "...", "quote": "Original text substring from README" }},
-            {{ "claim": "...", "quote": "Original text substring from README" }}
+            {{ "claim": "Kurzer Claim", "quote": "Exaktes Zitat aus dem README" }}
           ],
           "specialist_score": 1,
-          "confidence": "low",
+          "confidence": "low" | "medium" | "high",
           "unknowns": ["..."]
         }}
         """
@@ -137,21 +141,14 @@ class LLMClient:
         try:
             response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
             response.raise_for_status()
-            result = response.json()
-            content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            content = response.json().get('choices', [{}])[0].get('message', {}).get('content', '')
 
             analysis = extract_json_from_text(content)
             if not analysis:
-                logger.error(f"Failed to parse JSON from LLM response. Raw Content:\n{content[:500]}...\n[Truncated]")
+                logger.error(f"JSON Parse Error. Raw:\n{content[:500]}...")
                 return None
             return analysis
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"LLM Request failed: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response text: {e.response.text}")
-            return None
         except Exception as e:
-            logger.error(f"Error during LLM analysis: {e}")
+            logger.error(f"LLM Error: {e}")
             return None

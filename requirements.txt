@@ -4,3 +4,4 @@ python-dotenv
 pytest
 python-dateutil
 markdown2
+PyYAML
