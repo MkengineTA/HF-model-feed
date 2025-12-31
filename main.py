@@ -15,6 +15,7 @@ from llm_client import LLMClient
 from reporter import Reporter
 from mailer import Mailer
 import model_filters as filters
+from namespace_policy import classify_namespace
 
 # Setup logging
 logger = setup_logging()
@@ -29,6 +30,16 @@ def extract_yaml_front_matter(readme_text):
         except yaml.YAMLError:
             pass
     return None
+
+def quote_in_readme(quote: str, readme: str) -> bool:
+    if not quote or not readme:
+        return False
+    if quote in readme:
+        return True
+    # Fuzzy match: normalize whitespace and case
+    q = " ".join(quote.split()).lower()
+    r = " ".join(readme.split()).lower()
+    return q in r
 
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
@@ -110,8 +121,6 @@ def main():
             processing_queue.append((model_id, model_info, reason))
 
     processed_models = []
-
-    # In-Run Author Cache
     author_run_cache = {}
 
     for model_id, model_info, reason in processing_queue:
@@ -120,15 +129,18 @@ def main():
         # --- Author / Namespace Logic ---
         namespace = model_id.split('/')[0] if '/' in model_id else None
 
-        if namespace in getattr(config, "EXCLUDED_NAMESPACES", set()):
-            logger.info(f"Skipping {model_id}: Excluded namespace {namespace}")
+        # Early Blacklist Check
+        decision, ns_reason = classify_namespace(namespace or "")
+        is_whitelisted = (decision == "allow_whitelist")
+
+        if decision == "deny_blacklist":
+            logger.info(f"Skipping {model_id}: {ns_reason}")
             continue
 
-        trust_tier = 1 # Default: Normal User
+        trust_tier = 1
         author_kind = 'unknown'
 
         if namespace:
-            # Check In-Run Cache
             if namespace in author_run_cache:
                 author_kind, auth_data, trust_tier = author_run_cache[namespace]
             else:
@@ -140,29 +152,21 @@ def main():
                     last_checked = dateutil.parser.parse(str(auth_entry['last_checked']))
                     age_days = (datetime.now(timezone.utc) - last_checked).days
                     kind_db = auth_entry['kind']
-
                     if kind_db in ('user', 'org') and age_days < 14:
                         cache_valid = True
-
-                    # Unknown is NOT valid cache (unless recent, but we force re-check)
                     if kind_db == 'unknown':
                         cache_valid = False
 
                 if not cache_valid:
                     logger.info(f"Validating author: {namespace}")
-
-                    # Tri-State Check: Org
-                    org_data = hf_client.get_org_details(namespace) # returns dict/{} or None
-
-                    if org_data: # Truthy dict -> Org exists
+                    org_data = hf_client.get_org_details(namespace)
+                    if org_data:
                         author_kind = 'org'
                         auth_data = {'namespace': namespace, 'kind': 'org', 'raw_json': org_data}
                         db.upsert_author(auth_data)
-                    elif org_data == {}: # 404 -> Not an Org -> Check User
-                        # Check User
-                        user_data = hf_client.get_user_overview(namespace) # dict/{} or None
-
-                        if user_data: # Truthy -> User exists
+                    elif org_data == {}:
+                        user_data = hf_client.get_user_overview(namespace)
+                        if user_data:
                             author_kind = 'user'
                             auth_data = {
                                 'namespace': namespace,
@@ -173,23 +177,20 @@ def main():
                                 'raw_json': user_data
                             }
                             db.upsert_author(auth_data)
-                        elif user_data == {}: # 404 -> Not User either -> Unknown (Deleted?)
+                        elif user_data == {}:
                             author_kind = 'unknown'
                             auth_data = {'namespace': namespace, 'kind': 'unknown', 'raw_json': {}}
                             db.upsert_author(auth_data)
-                        else: # None (Transient Error on User)
-                            # Do not cache unknown! Use 'unknown' for this run but don't DB write
+                        else:
                             author_kind = 'unknown'
                             auth_data = None
-                    else: # None (Transient Error on Org)
-                        # Do not cache
+                    else:
                         author_kind = 'unknown'
                         auth_data = None
                 else:
                     author_kind = auth_entry['kind']
                     auth_data = dict(auth_entry)
 
-                # Determine Tier
                 if author_kind == 'org':
                     trust_tier = 3
                 elif author_kind == 'user' and auth_data:
@@ -200,7 +201,6 @@ def main():
                     else:
                         trust_tier = 1
 
-                # Update Run Cache
                 author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
         logger.info(f"Author: {namespace} | Kind: {author_kind} | Tier: {trust_tier}")
@@ -208,7 +208,6 @@ def main():
         filter_trace = []
         tags = model_info.tags or []
 
-        # --- Phase 0: Security & Hard Scope (Metadata) ---
         file_details = hf_client.get_model_file_details(model_id)
         if not filters.is_secure(file_details):
             logger.warning(f"Skipping {model_id}: Security check failed")
@@ -223,7 +222,6 @@ def main():
         if filters.is_export_or_conversion(model_id, tags, file_details):
             filter_trace.append("skip:export_conversion")
 
-        # --- Phase 1: Deep Filters (Metadata + Files) ---
         params_est = filters.extract_parameter_count(model_info, file_details)
         if params_est and params_est > config.MAX_PARAMS_BILLIONS:
             filter_trace.append(f"skip:params_too_large_{params_est:.1f}B")
@@ -232,7 +230,6 @@ def main():
             logger.info(f"Skipping {model_id}: {filter_trace}")
             continue
 
-        # --- Phase 2: README Validation ---
         readme_content = hf_client.get_model_readme(model_id)
         if not readme_content:
             logger.info(f"Skipping {model_id}: No README")
@@ -250,7 +247,6 @@ def main():
             logger.info(f"Skipping {model_id}: Robotics/Embodied")
             continue
 
-        # --- Phase 3: Quality Gate (Tier-Dependent) ---
         yaml_meta = extract_yaml_front_matter(readme_content)
         links_present = filters.has_external_links(readme_content)
         info_score = filters.compute_info_score(readme_content, yaml_meta, tags, links_present)
@@ -261,7 +257,7 @@ def main():
         final_status = 'processed'
         should_skip_quality = False
 
-        if trust_tier <= 1: # Normal User
+        if trust_tier <= 1:
             if is_roleplay:
                 should_skip_quality = True
                 filter_trace.append("skip:roleplay_content")
@@ -271,12 +267,10 @@ def main():
             elif info_score < 3 and not links_present:
                 should_skip_quality = True
                 filter_trace.append("skip:low_info_score")
-        else: # Org / Strong User
-            # Even for Orgs, skip explicit boilerplate/more info needed
+        else:
             if is_boilerplate or has_more_info:
                 logger.info(f"Skipping {model_id}: Boilerplate/MoreInfoNeeded ({author_kind} Tier {trust_tier})")
                 continue
-
             if is_roleplay:
                 pass
 
@@ -284,18 +278,22 @@ def main():
             logger.info(f"Skipping {model_id}: Quality Gate Failed ({filter_trace[-1]})")
             continue
 
-        # --- Phase 4: LLM Analysis ---
         logger.info(f"Analyzing {model_id} with LLM...")
         llm_result = llm_client.analyze_model(readme_content, tags, yaml_meta=yaml_meta, file_summary=file_details)
 
+        report_note_evidence = "Evidence check: Passed"
         if llm_result:
             evidence = llm_result.get('evidence', [])
+            any_mismatch = False
             for item in evidence:
                 quote = item.get('quote', '')
-                if quote and quote not in readme_content:
+                if quote and not quote_in_readme(quote, readme_content):
                     logger.warning(f"Evidence fail: {quote[:30]}...")
-                    final_status = 'review_required'
-                    llm_result['confidence'] = 'low'
+                    any_mismatch = True
+
+            if any_mismatch:
+                llm_result['confidence'] = 'low'
+                report_note_evidence = "Evidence check: Mismatch"
         else:
             logger.error(f"LLM analysis failed for {model_id}")
             final_status = 'error'
@@ -318,7 +316,7 @@ def main():
             'trust_tier': trust_tier,
             'pipeline_tag': filters.get_pipeline_tag(model_info),
             'filter_trace': filter_trace,
-            'report_notes': f"Evidence check: {'Passed' if final_status=='processed' else 'Failed'}" if llm_result else "LLM Failed"
+            'report_notes': report_note_evidence if llm_result else "LLM Failed"
         }
 
         # New Strict Filter for Inclusion
@@ -331,7 +329,6 @@ def main():
             if not args.dry_run:
                 db.save_model(model_data)
 
-            # Filter for Report
             keep_for_report = True
             if exclude_review and final_status != "processed":
                 keep_for_report = False

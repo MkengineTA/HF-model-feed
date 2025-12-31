@@ -11,6 +11,7 @@ sys.path.append(os.getcwd())
 import main
 import config
 import model_filters as filters
+from namespace_policy import classify_namespace
 
 class TestIntegration(unittest.TestCase):
 
@@ -56,8 +57,9 @@ class TestIntegration(unittest.TestCase):
         # Author details
         # trending -> Org (exists)
         # new -> Not Org (404), User (exists)
-        mock_hf_instance.get_org_details.side_effect = lambda ns: {'id': 'org1'} if ns == 'trending' else {} if ns == 'new' else None
-        mock_hf_instance.get_user_overview.side_effect = lambda ns: {'numFollowers': 50, 'isPro': False} if ns == 'new' else None
+        # updated-model -> User (cached, but if called, returns dict)
+        mock_hf_instance.get_org_details.side_effect = lambda ns: {'id': 'org1'} if ns == 'trending' else {} if ns == 'new' else {} if ns == 'updated-model' else None
+        mock_hf_instance.get_user_overview.side_effect = lambda ns: {'numFollowers': 50, 'isPro': False} if ns == 'new' else {'numFollowers': 100} if ns == 'updated-model' else None
 
         # Models
         m_new = MagicMock()
