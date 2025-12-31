@@ -1,148 +1,146 @@
 # Edge AI Scout & Specialist Model Monitor
 
-**Edge AI Scout** ist ein automatisiertes, Python-basiertes Tool zur täglichen Entdeckung, Filterung und Analyse neuer KI-Modelle auf Hugging Face. Es ist speziell darauf ausgelegt, **Specialist Models** für **Edge AI** und **Manufacturing** (Fertigung) zu identifizieren.
-
-Das System scannt mehrere Quellen auf Hugging Face, filtert ungeeignete Modelle (zu groß, unsicher, irrelevant) und nutzt ein LLM (Lokal oder Cloud), um das Potential für industrielle Anwendungen zu bewerten.
+**Edge AI Scout** is an automated, Python-based pipeline designed to discover, filter, and analyze specialized AI models on Hugging Face daily. It is specifically built to identify **Specialist Models** suitable for **Edge AI** and **Manufacturing** applications, filtering out general-purpose chat models, generative art, and irrelevant content.
 
 ## 🚀 Features
 
-### 1. Multi-Source Discovery (4 Säulen)
-Das Tool aggregiert Modelle aus vier strategischen Quellen:
-*   **Recently Created**: Scannt brandneue Repositories (`sort=createdAt`).
-*   **Recently Updated**: Findet Modelle mit frischen Updates (`sort=lastModified`). Wenn ein Modell bereits bekannt ist, aber geupdated wurde, wird es neu analysiert (Delta-Check).
-*   **Trending Models**: Identifiziert Modelle, die aktuell in der Community populär sind.
-*   **Daily Papers**: Durchsucht täglich veröffentlichte Forschungspapiere nach verknüpften Modell-Implementierungen.
+### 1. Multi-Source Discovery
+The scout aggregates models from four strategic sources:
+*   **Recently Created**: Scans brand new repositories (`sort=createdAt`).
+*   **Recently Updated**: Finds models with fresh updates (`sort=lastModified`). If a model is already tracked but updated, it triggers a re-analysis (Delta Check).
+*   **Trending Models**: Identifies models currently gaining traction in the community.
+*   **Daily Papers**: Scans daily published research papers for linked model implementations.
 
-### 2. Intelligente Filter-Kaskade
-Bevor ein Modell teuer analysiert wird, durchläuft es strenge Filter:
-*   **Parameter-Limit (< 10B)**: Metadaten, Regex oder Dateigrößen-Heuristik.
-*   **Sicherheits-Check**: Ausschluss von Modellen mit "unsafe" Scans.
-*   **Format & Inhalt**: Ausschluss von Quantisierungen und unerwünschten Inhalten.
+### 2. Intelligent Filter Cascade (v2)
+Before any expensive LLM analysis, models pass through a strict, multi-stage filter:
 
-### 3. LLM Agent Workflow
-Der Kern des Scouts ist ein intelligenter LLM-Agent.
-**Workflow:**
-1.  **Input**: Das komplette README (bis 32k Zeichen) + HF Tags.
-2.  **Prompting**: Der Agent erhält eine spezifische Persona ("Expert AI Researcher") und Instruktionen zur technischen Tiefe.
-3.  **Analyse-Schritte**:
-    *   **Identifikation**: Ist es ein Base Model, Adapter (LoRA) oder Finetune?
-    *   **Delta-Analyse**: Bei Adaptern wird explizit herausgearbeitet, was sich zum Basismodell geändert hat (Dataset, Zielaufgabe) und was der Mehrwert ist.
-    *   **Scoring**: Bewertung (1-10) der Eignung für Manufacturing/Edge.
-4.  **Output**: Strukturiertes JSON für die Weiterverarbeitung.
+*   **Namespace Policy**:
+    *   **Whitelist**: Trusted organizations (e.g., Google, Nvidia, Qwen) bypass some quality gates.
+    *   **Blacklist**: Known quantization spammers or irrelevant users are skipped immediately.
+*   **Hard Scope Filters**:
+    *   **Generative Visuals**: Excludes Text-to-Image, Diffusion, 3D, and ComfyUI models.
+    *   **Robotics/VLA**: Excludes pure robotics policies *unless* they are whitelisted as Vision/Inspection/VQA.
+    *   **Exports/Conversions**: Excludes ONNX, GGUF, GPTQ, and MergeKit models using regex pattern matching.
+    *   **NSFW**: Strict exclusion of adult content.
+    *   **Parameters**: Defaults to <40B parameters (configurable).
+*   **Quality Gate**:
+    *   Rejects boilerplate READMEs ("More Information Needed").
+    *   Calculates an `Info Score` based on YAML metadata, tags, and text density. Low-quality user repositories are skipped.
 
-### 4. Reporting
-*   **Markdown Newsletter**: Listet alle verarbeiteten Modelle, sortiert nach Specialist Score.
-*   **E-Mail Versand**: Generiert einen professionellen HTML-Report (Outlook-kompatibel) und versendet ihn via SMTP.
-*   **CSV Export**: Strukturierte Liste für Labeling.
-*   **SQLite Datenbank**: Speichert Status, Zeitstempel (Created/Modified) und Analyse-Ergebnisse.
+### 3. LLM Agent Workflow & Evidence Validation
+The core analysis engine uses an LLM (Local or Cloud) acting as a "Strict Analyst".
 
----
+1.  **Context Extraction**: Parses README text and YAML frontmatter.
+2.  **Analysis**:
+    *   **Categorization**: Identifies model type (Base, Adapter, Finetune).
+    *   **Delta Analysis**: For finetunes, extracts *exactly* what changed (Dataset, Objective) and the value proposition vs. the base model.
+    *   **Scoring**: Scores suitability for Manufacturing/Edge (1-10).
+3.  **Evidence Gate**: The LLM must provide **direct quotes** from the README to support its claims. The system programmatically validates these quotes. If a quote is missing or hallucinated, the model is flagged or downgraded.
 
-## 🧠 LLM Anforderungen & Auswahl
-
-Damit der Scout zuverlässig funktioniert, muss das gewählte LLM bestimmte technische Anforderungen erfüllen.
-
-### 1. Context Window (Kontext-Fenster)
-*   **Empfehlung:** **Mindestens 16k Tokens** (besser 32k).
-*   **Grund:** Der Scout sendet bis zu **32.000 Zeichen** (ca. 8k - 10k Tokens) reinen README-Text.
-
-### 2. Fähigkeiten (Capabilities)
-*   **JSON Output (Kritisch):** Das Modell **muss** zuverlässig valides JSON generieren.
-*   **Reasoning (Wichtig):** Für die **Delta-Analyse** muss das Modell verstehen, *warum* ein Finetune existiert.
-
-### 3. Modell-Empfehlungen
-*   **Cloud (OpenRouter):** `qwen/qwen-2.5-72b-instruct`, `meta-llama/llama-3.1-70b-instruct`.
-*   **Lokal (Ollama):** `llama3.1:8b-fp16`, `mistral-nemo:12b`.
+### 4. Robust Reporting
+*   **Run Statistics**: Tracks total candidates, skipped models (with reasons), and analyzed count.
+*   **Markdown Newsletter**: Generates a structured report with "Cards" for each model, sorted by Specialist Score.
+*   **Email Dispatch**: Converts the Markdown report to Outlook-optimized HTML and sends it via SMTP (Gmail).
+*   **Persistence**: Stores model status, metadata, and skip traces in SQLite for historical tracking and debugging.
 
 ---
 
-## 🛠 Installation & Konfiguration
+## 🛠 Installation & Configuration
+
+### Prerequisites
+*   Python 3.9+
+*   Hugging Face Account (for API Token)
 
 ### Setup
 
-1.  **Repository klonen**:
+1.  **Clone Repository**:
     ```bash
     git clone <repo-url>
-    cd <repo-folder>
+    cd edge-ai-scout
     ```
 
-2.  **Abhängigkeiten installieren**:
+2.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
 
-3.  **Konfiguration (.env)**:
-    Kopieren Sie die Vorlage und passen Sie sie an:
+3.  **Configuration (.env)**:
+    Copy the example and customize it:
     ```bash
     cp .env.example .env
     ```
 
-### Konfiguration (.env)
-```ini
-HF_TOKEN=...
-DB_PATH=models.db
+### Configuration Variables (`.env`)
 
-# LLM Konfiguration
-LLM_API_URL=https://openrouter.ai/api/v1/chat/completions
-LLM_MODEL=qwen/qwen-2.5-72b-instruct
-LLM_API_KEY=sk-or-your-key-here
-LLM_ENABLE_REASONING=True
-
-# E-Mail Konfiguration (Beispiel Gmail)
-SMTP_USER=ihre.email@gmail.com
-SMTP_PASS=ihr-app-passwort
-RECEIVER_MAIL=ziel.email@firma.com
-```
+| Variable | Description |
+| :--- | :--- |
+| `HF_TOKEN` | **Required**. Hugging Face User Access Token (Read). |
+| `DB_PATH` | Path to SQLite database (default: `models.db`). |
+| `LLM_API_URL` | Endpoint for LLM (e.g., OpenRouter or local Ollama). |
+| `LLM_MODEL` | Model ID (e.g., `qwen/qwen-2.5-72b-instruct`). |
+| `LLM_API_KEY` | API Key for the LLM provider. |
+| `LLM_ENABLE_REASONING` | Set to `True` if using reasoning models (e.g., R1, o1). |
+| `SMTP_USER` | Gmail address for sending reports. |
+| `SMTP_PASS` | Gmail App Password (not your login password). |
+| `RECEIVER_MAIL` | Destination email address. |
 
 ---
 
-## 📧 E-Mail Setup (Gmail)
+## 🚀 Usage
 
-Da Gmail den einfachen Login via Passwort deaktiviert hat, benötigen Sie ein **App-Passwort**:
-
-1.  Loggen Sie sich in Ihr Google Konto ein.
-2.  Gehen Sie zu **Sicherheit** -> **Bestätigung in zwei Schritten** (muss aktiviert sein).
-3.  Scrollen Sie unten zu **App-Passwörter**.
-4.  Erstellen Sie ein neues Passwort (Name: "Edge AI Scout").
-5.  Kopieren Sie das 16-stellige Passwort (ohne Leerzeichen) in die `.env` unter `SMTP_PASS`.
-
-Der generierte HTML-Report ist für **Outlook**, **Thunderbird** und **Gmail Web** optimiert (nutzt Inline-CSS und Tabellen-Layouts).
-
----
-
-## ❓ FAQ & Logik
-
-### Wie funktioniert der erste Run?
-Wenn die Datenbank leer ist (erster Start), setzt der Scout den "letzten Run" automatisch auf **24 Stunden in der Vergangenheit**.
-Er lädt also **nicht** alle Modelle seit Beginn der Zeit, sondern nur die des letzten Tages.
-
-### Wie wird das Update-Intervall gesteuert?
-Das Skript speichert am Ende jedes erfolgreichen Laufs einen Zeitstempel (`metadata` Tabelle). Beim nächsten Start werden nur Modelle geladen, die **nach** diesem Zeitstempel erstellt oder aktualisiert wurden.
-
----
-
-## 🧪 Testing
-
-Um das Setup zu testen, ohne die Datenbank zu verändern ("Dry Run"), aber trotzdem eine Test-E-Mail zu erhalten:
+### Manual Run (Testing)
+To test the pipeline without saving to DB ("Dry Run") and force an email dispatch:
 
 ```bash
 python main.py --limit 5 --dry-run --force-email
 ```
-*   `--limit 5`: Lädt nur 5 Modelle (spart API-Calls/Kosten).
-*   `--dry-run`: Speichert nichts in die DB (Modelle werden beim nächsten echten Run erneut verarbeitet).
-*   `--force-email`: Erzwingt den E-Mail-Versand, der normalerweise im Dry-Run deaktiviert ist.
+
+*   `--limit <n>`: Fetches max `n` models per source (Safety ceiling).
+*   `--dry-run`: Performs analysis but does not commit changes to the database.
+*   `--force-email`: Sends the email report even in Dry Run mode (usually suppressed).
+
+### Production (Cronjob)
+Run the scout daily (e.g., at 06:00 AM). It automatically handles incremental updates (fetching only models created/updated since the last successful run).
+
+```bash
+0 6 * * * cd /path/to/edge-ai-scout && /usr/bin/python3 main.py >> scout.log 2>&1
+```
 
 ---
 
-## 🚀 Nutzung (Produktion)
+## 🏗 Architecture Details
 
-Starten Sie den Scan ohne Test-Flags:
+### Trust Tiers & Author Detection
+The system caches author metadata (User vs. Organization) to reduce API calls and apply differential filtering:
+*   **Tier 3 (Trusted Org)**: Organizations detected via `/avatar` endpoint. Quality gates are relaxed (we review "thin" READMEs from trusted orgs).
+*   **Tier 2 (Strong User)**: Users with >200 followers or PRO status.
+*   **Tier 1 (Normal User)**: Strict quality gates apply.
+
+### Caching Strategy
+*   **Author Cache**: Stores namespace types (Org/User) for 14 days. 'Unknown' status (404) is NOT cached to allow immediate re-validation if an account is created.
+*   **Incremental Fetching**: The `metadata` table stores the `last_run` timestamp. Subsequent runs fetch only models newer than this timestamp.
+
+---
+
+## 📊 Output Format
+
+The generated report highlights key technical details:
+
+### [Model Name]
+*   **Type**: Finetune | **Score**: 9/10 | **Author**: Organization (Tier 3)
+*   **Blurb**: concise technical summary (approx. 100 words).
+*   **Key Facts**: Bullet points on architecture and training.
+*   **Delta**: Specific changes from the base model and why they matter.
+*   **Edge Readiness**: VRAM requirements and quantization status.
+*   **Manufacturing Fit**: Specific use cases (e.g., defect detection).
+*   **Confidence**: High/Medium/Low (based on evidence validation).
+
+---
+
+## 🧪 Development
+
+Run the test suite to verify filtering logic and integrations:
 
 ```bash
-python main.py
-```
-
-### Automatisierung (Cronjob)
-```bash
-0 6 * * * cd /pfad/zu/edge-ai-scout && /pfad/zu/python main.py >> scout.log 2>&1
+python -m unittest discover .
 ```
