@@ -12,6 +12,7 @@ import main
 import config
 import model_filters as filters
 from namespace_policy import classify_namespace
+from run_stats import RunStats
 
 class TestIntegration(unittest.TestCase):
 
@@ -129,6 +130,9 @@ class TestIntegration(unittest.TestCase):
             ]
         }
 
+        # Mock Reporter returning path
+        MockReporter.return_value.generate_full_report.return_value = MagicMock(read_text=MagicMock(return_value="Report Content"))
+
         # Run Main
         with patch.object(sys, 'argv', ["main.py", "--limit", "10", "--force-email"]):
             main.main()
@@ -142,13 +146,11 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("trending/hot-model", saved_ids)
 
         # Check if Authors upserted
-        # new -> upsert user
-        # trending -> upsert org
-        # updated-model -> cached, no upsert (unless recheck triggered)
         self.assertTrue(mock_db_instance.upsert_author.called)
 
         mock_db_instance.set_last_run_timestamp.assert_called()
         MockMailer.return_value.send_report.assert_called()
+        MockReporter.return_value.generate_full_report.assert_called()
 
 if __name__ == '__main__':
     unittest.main()

@@ -29,7 +29,7 @@ MAX_PARAMS_BILLIONS = 40.0
 EXCLUDED_NAMESPACES = {"thireus"}
 
 # Reporting Filters
-MIN_SPECIALIST_SCORE = 0
+MIN_SPECIALIST_SCORE = 6
 EXCLUDE_REVIEW_REQUIRED = True
 
 # --- Namespace Lists ---
@@ -127,9 +127,7 @@ WHITELIST_NAMESPACES = {
     "vidore",
     "Wan-AI",
     "XiaomiMiMo",
-    "zai-org",
-    "HIT-TMG",
-    "codefuse-ai"
+    "zai-org"
 }
 
 def _parse_csv_set(val):
