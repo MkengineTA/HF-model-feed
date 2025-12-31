@@ -129,15 +129,48 @@ class HFClient:
             return None
 
     def get_model_readme(self, model_id):
+        # 1) fast path: README.md
         try:
             readme_path = hf_hub_download(repo_id=model_id, filename="README.md")
             with open(readme_path, 'r', encoding='utf-8', errors='ignore') as f:
                 return f.read()
         except (RepositoryNotFoundError, RevisionNotFoundError):
-            return None
+            pass # Try fallbacks
         except Exception as e:
-            logger.error(f"Error downloading README for {model_id}: {e}")
-            return None
+            logger.warning(f"README.md fetch failed for {model_id}: {e}")
+
+        # 2) fallback: look for other readme-ish files via tree
+        files = self.get_model_file_details(model_id)
+        if isinstance(files, list):
+            import re
+            candidates = []
+            for item in files:
+                path = (item.get("path") or "").strip()
+                if not path: continue
+                low = path.lower()
+                if low in ("readme.md", "readme.mdown", "readme.markdown", "modelcard.md"):
+                    candidates.append(path)
+                elif re.match(r"^readme(\..+)?$", low.split("/")[-1]):
+                    candidates.append(path)
+                elif low.endswith("/readme.md"):
+                    candidates.append(path)
+
+            for fn in candidates[:5]:
+                try:
+                    p = hf_hub_download(repo_id=model_id, filename=fn)
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        return f.read()
+                except Exception:
+                    continue
+
+        # 3) last fallback: use model card metadata (if present)
+        info = self.get_model_info(model_id)
+        if info:
+            card = getattr(info, "cardData", None) or getattr(info, "card_data", None)
+            if card:
+                return "## Model card metadata (fallback)\n\n" + str(card)
+
+        return None
 
     def get_model_info(self, model_id):
         try:

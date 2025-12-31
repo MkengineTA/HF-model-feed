@@ -25,9 +25,40 @@ RECEIVER_MAIL = os.getenv("RECEIVER_MAIL")
 # Parameter thresholds
 MAX_PARAMS_BILLIONS = 40.0
 
-# Explicit Exclusions
+# Explicit Exclusions (Deprecated by new namespace_policy but kept for backward compatibility if needed)
 EXCLUDED_NAMESPACES = {"thireus"}
 
 # Reporting Filters
 MIN_SPECIALIST_SCORE = 6
 EXCLUDE_REVIEW_REQUIRED = True
+
+# --- Namespace Lists ---
+
+BLACKLIST_NAMESPACES = {
+    "ubergarm",
+    "unsloth",
+    "mradermacher",
+    "aaryank",
+    "bartowski",
+    "mlx-community",
+    "noctrex",
+    "onnxruntime",
+    "lmstudio-community",
+    "ggml-org",
+    "devquasar",
+    "thireus" # Merged old exclusion
+}
+
+WHITELIST_NAMESPACES = {
+    "jan-hq",
+    "janhq",
+}
+
+def _parse_csv_set(val):
+    if not val:
+        return set()
+    return {x.strip().lower() for x in val.split(",") if x.strip()}
+
+# ENV Overrides
+BLACKLIST_NAMESPACES |= _parse_csv_set(os.getenv("HF_BLACKLIST"))
+WHITELIST_NAMESPACES |= _parse_csv_set(os.getenv("HF_WHITELIST"))

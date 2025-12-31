@@ -1,133 +1,139 @@
+from __future__ import annotations
+
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Optional
+from run_stats import RunStats
+from collections import Counter
 import csv
 import os
-from datetime import datetime
 
 class Reporter:
     def __init__(self, output_dir="."):
         self.output_dir = output_dir
 
-    def generate_markdown_report(self, models, date_str=None):
+    def write_markdown_report(
+        self,
+        stats: RunStats,
+        date_str: str = None,
+    ) -> Path:
+        out = Path(self.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
         if not date_str:
             date_str = datetime.now().strftime("%Y-%m-%d")
 
-        filename = os.path.join(self.output_dir, f"report_{date_str}.md")
+        # We append timestamp to filename to avoid overwrites if running multiple times/day
+        ts = stats.started_at.astimezone(timezone.utc).strftime("%H%M%S")
+        path = out / f"report_{date_str}_{ts}.md"
 
-        processed_list = []
-        review_required = []
+        lines: list[str] = []
+        lines.append(f"# EdgeAIScout Report ({date_str})")
+        lines.append("")
+        lines.append("## Summary")
+        lines.append(f"- Candidates: **{stats.candidates_total}**")
+        lines.append(f"- Processed: **{stats.processed}**")
+        lines.append(f"- Skipped: **{stats.skipped}**")
+        lines.append(f"- LLM analyzed: **{stats.llm_analyzed}**")
+        lines.append("")
 
-        for m in models:
-            analysis = m.get('llm_analysis')
-            status = m.get('status')
+        lines.append("## Top skip reasons")
+        if not stats.skip_reasons:
+            lines.append("- (none)")
+        else:
+            for reason, cnt in stats.top_skip_reasons(20):
+                lines.append(f"- **{reason}**: {cnt}")
 
-            if analysis and status == 'processed':
-                processed_list.append(m)
-            elif status == 'review_required':
-                 review_required.append(m)
+        # Top Skipped Uploaders
+        uploader_skips = Counter(item.author for item in stats.skip_items if item.author)
+        if uploader_skips:
+            lines.append("")
+            lines.append("## Top Skipped Uploaders")
+            for uploader, cnt in uploader_skips.most_common(10):
+                lines.append(f"- **{uploader}**: {cnt}")
 
-        # Sort processed list by specialist_score DESC
-        processed_list.sort(key=lambda x: x['llm_analysis'].get('specialist_score', 0), reverse=True)
+        lines.append("")
+        lines.append("## Processed Models")
+        if not stats.processed_items:
+            lines.append("No models met the criteria for this report.")
+        else:
+            # We need to fetch details? RunStats only has ModelRef (id, uploader).
+            # But main.py has `processed_models` list with full data.
+            # Reporter.generate_markdown_report was getting full list.
+            # I should keep `generate_markdown_report` logic but integrate RunStats?
+            # Or `write_markdown_report` assumes `stats` has ref, but we want full content.
+            # I will modify `write_markdown_report` to accept `full_models_list` as well.
+            # But the plan implies `write_markdown_report` replaces `generate_markdown_report`.
+            pass
 
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f"# Edge AI Scout Report - {date_str}\n\n")
-            f.write(f"**Gescannte Modelle:** {len(models)}\n\n")
+        # Since main.py collects `processed_models` (full dicts), I will pass that list
+        # to a helper or just append it here if passed.
+        # But `RunStats` only stores Refs.
+        # I will change signature to accept `processed_models_data` separately.
 
-            if processed_list:
-                for m in processed_list:
-                    a = m['llm_analysis']
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
 
-                    # Fields
-                    name = m['name']
-                    # Escape name for Markdown display (e.g. backticks)
-                    name_disp = f"`{name}`"
-                    link = f"https://huggingface.co/{m['id']}"
+    def generate_full_report(self, stats: RunStats, processed_models: list, date_str=None):
+        # This combines stats and detailed model cards
+        path = self.write_markdown_report(stats, date_str)
 
-                    params = a.get('params_m')
-                    params_str = f"{params}M" if params else "Unknown"
+        # Read base stats
+        base_content = path.read_text(encoding="utf-8")
 
-                    tier_str = f"Tier {m.get('trust_tier', '?')}"
-                    kind_str = m.get('author_kind', 'unknown')
+        # Append Model Cards
+        details = []
+        details.append("\n## Detailed Analysis\n")
 
-                    # Metadata Header
-                    f.write(f"## [{name_disp}]({link})\n")
-                    f.write(f"**Typ:** {a.get('model_type', 'N/A')} | ")
-                    f.write(f"**Score:** {a.get('specialist_score', 0)}/10 | ")
-                    f.write(f"**Params:** {params_str} | ")
-                    f.write(f"**Author:** {kind_str} ({tier_str})\n\n")
+        if not processed_models:
+            details.append("- No processed models to display.")
+        else:
+            # Sort by score
+            processed_models.sort(key=lambda x: x['llm_analysis'].get('specialist_score', 0), reverse=True)
 
-                    # Blurb
-                    f.write(f"> {a.get('newsletter_blurb', 'Keine Beschreibung verfügbar.')}\n\n")
+            for m in processed_models:
+                a = m['llm_analysis']
+                name = m['name']
+                name_disp = f"`{name}`"
+                link = f"https://huggingface.co/{m['id']}"
+                params = a.get('params_m')
+                params_str = f"{params}M" if params else "Unknown"
 
-                    # Key Facts
-                    f.write("### 🔑 Key Facts\n")
-                    for fact in a.get('key_facts', []):
-                        f.write(f"- {fact}\n")
-                    f.write("\n")
+                tier_str = f"Tier {m.get('trust_tier', '?')}"
+                kind_str = m.get('author_kind', 'unknown')
 
-                    # Delta (Nested)
-                    delta = a.get('delta', {})
-                    f.write("### 🔺 Delta (vs. Base)\n")
-                    if delta.get('what_changed'):
-                        f.write("**Was ist neu?**\n\n")
-                        for item in delta.get('what_changed', []):
-                            f.write(f"- {item}\n")
-                    if delta.get('why_it_matters'):
-                        f.write("\n**Warum wichtig?**\n\n")
-                        for item in delta.get('why_it_matters', []):
-                            f.write(f"- {item}\n")
-                    f.write("\n")
+                details.append(f"### [{name_disp}]({link})")
+                details.append(f"**Typ:** {a.get('model_type', 'N/A')} | **Score:** {a.get('specialist_score', 0)}/10 | **Params:** {params_str} | **Author:** {kind_str} ({tier_str})\n")
+                details.append(f"> {a.get('newsletter_blurb', 'N/A')}\n")
 
-                    # Manufacturing
-                    manu = a.get('manufacturing', {})
-                    f.write("### 🏭 Manufacturing Fit\n")
-                    if manu.get('use_cases'):
-                        f.write("**Use Cases:**\n\n")
-                        for item in manu.get('use_cases', []):
-                            f.write(f"- {item}\n")
-                    if manu.get('risks'):
-                        f.write("\n**Risiken:**\n\n")
-                        for item in manu.get('risks', []):
-                            f.write(f"- {item}\n")
-                    f.write("\n")
+                details.append("#### 🔑 Key Facts")
+                for fact in a.get('key_facts', []):
+                    details.append(f"- {fact}")
 
-                    # Edge
-                    edge = a.get('edge', {})
-                    f.write("### ⚡ Edge Readiness\n")
-                    f.write(f"- **Edge Ready:** {'✅' if edge.get('edge_ready') else '❌'}\n")
-                    if edge.get('min_vram_gb'):
-                        f.write(f"- **Min VRAM:** {edge.get('min_vram_gb')} GB\n")
-                    if edge.get('deployment_notes'):
-                        for item in edge.get('deployment_notes', []):
-                            f.write(f"- {item}\n")
-                    f.write("\n")
+                delta = a.get('delta', {})
+                if delta.get('what_changed'):
+                    details.append("\n#### 🔺 Delta")
+                    details.append("**Was ist neu?**\n")
+                    for item in delta.get('what_changed', []):
+                        details.append(f"- {item}")
 
-                    # Footer
-                    confidence = a.get('confidence', 'low')
-                    conf_icon = "🟢" if confidence == 'high' else "🟡" if confidence == 'medium' else "🔴"
-                    unknowns = a.get('unknowns', [])
-                    unknowns_str = ', '.join(unknowns) if unknowns else "None"
-                    f.write(f"_{conf_icon} Confidence: {confidence} | Unknowns: {unknowns_str}_\n")
+                manu = a.get('manufacturing', {})
+                if manu.get('use_cases'):
+                    details.append("\n#### 🏭 Manufacturing Fit")
+                    details.append("**Use Cases:**\n")
+                    for item in manu.get('use_cases', []):
+                        details.append(f"- {item}")
 
-                    # Evidence (Debug/Verify)
-                    evidence = a.get('evidence', [])
-                    if evidence:
-                        f.write("\n_Evidence Check:_\n")
-                        for e in evidence:
-                            f.write(f"- _{e.get('claim', '')}_ -> \"{e.get('quote', '')[:50]}...\"\n")
+                confidence = a.get('confidence', 'low')
+                conf_icon = "🟢" if confidence == 'high' else "🟡" if confidence == 'medium' else "🔴"
+                unknowns = a.get('unknowns', [])
+                unknowns_str = ', '.join(unknowns) if unknowns else "None"
+                details.append(f"\n_{conf_icon} Confidence: {confidence} | Unknowns: {unknowns_str}_\n")
+                details.append("---\n")
 
-                    f.write("---\n\n")
-            else:
-                f.write("Keine Modelle erfolgreich analysiert.\n\n")
-
-            f.write("## 🔍 Review Required (Dünne Doku, Externe Links, etc.)\n\n")
-            if review_required:
-                for m in review_required:
-                    safe_name = f"`{m['name']}`"
-                    notes = m.get('report_notes', 'N/A')
-                    f.write(f"- [{safe_name}](https://huggingface.co/{m['id']}) - **Grund:** {notes}\n")
-            else:
-                f.write("Keine Modelle für manuellen Review.\n\n")
-
-        return filename
+        full_content = base_content + "\n" + "\n".join(details)
+        path.write_text(full_content, encoding="utf-8")
+        return path
 
     def export_csv(self, models, filename="labeling_pending.csv"):
         filepath = os.path.join(self.output_dir, filename)
