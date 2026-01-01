@@ -14,6 +14,16 @@ class Reporter:
     def __init__(self, output_dir: str = "."):
         self.output_dir = output_dir
 
+    @staticmethod
+    def _escape_markdown(text: str) -> str:
+        """
+        Escapes Markdown-sensitive characters for plain text contexts.
+        Currently focused on underscores so model names render correctly.
+        """
+        if not text:
+            return text
+        return text.replace("_", r"\_")
+
     def write_markdown_report(
         self,
         stats: RunStats,
@@ -81,15 +91,16 @@ class Reporter:
 
             for m in sorted(processed_models, key=lambda x: (_score(x), x.get("id", "")), reverse=True)[:40]:
                 mid = m.get("id", "")
+                mid_display = self._escape_markdown(mid)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
                 a = m.get("llm_analysis") or {}
                 score = a.get("specialist_score", 0)
                 mtype = a.get("model_type", "N/A")
                 link = f"https://huggingface.co/{mid}" if mid else ""
                 if link:
-                    lines.append(f"- **[{mid}]({link})** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **[{mid_display}]({link})** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
                 else:
-                    lines.append(f"- **{mid}** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **{mid_display}** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
 
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
@@ -128,6 +139,7 @@ class Reporter:
             for m in processed_models_sorted:
                 mid = m.get("id", "")
                 name = m.get("name") or (mid.split("/")[-1] if mid else "unknown")
+                name_display = self._escape_markdown(name)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
                 a = m.get("llm_analysis") or {}
 
@@ -142,7 +154,7 @@ class Reporter:
                 status = m.get("status", "processed")
                 notes = m.get("report_notes", "")
 
-                details.append(f"### [{name}]({link})" if link else f"### {name}")
+                details.append(f"### [{name_display}]({link})" if link else f"### {name_display}")
                 details.append("")
                 details.append(
                     f"**Model ID:** `{mid}`  \n"
