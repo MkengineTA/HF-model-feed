@@ -15,10 +15,9 @@ class Reporter:
         self.output_dir = output_dir
 
     @staticmethod
-    def _escape_markdown(text: str) -> str:
+    def _escape_underscores(text: str) -> str:
         """
-        Escapes Markdown-sensitive characters for plain text contexts.
-        Currently focused on underscores so model names render correctly.
+        Escapes underscores so model names render correctly in Markdown.
         """
         if not text:
             return text
@@ -91,7 +90,7 @@ class Reporter:
 
             for m in sorted(processed_models, key=lambda x: (_score(x), x.get("id", "")), reverse=True)[:40]:
                 mid = m.get("id", "")
-                mid_display = self._escape_markdown(mid)
+                mid_display = self._escape_underscores(mid)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
                 a = m.get("llm_analysis") or {}
                 score = a.get("specialist_score", 0)
@@ -139,7 +138,7 @@ class Reporter:
             for m in processed_models_sorted:
                 mid = m.get("id", "")
                 name = m.get("name") or (mid.split("/")[-1] if mid else "unknown")
-                name_display = self._escape_markdown(name)
+                name_display = self._escape_underscores(name)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
                 a = m.get("llm_analysis") or {}
 
