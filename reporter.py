@@ -44,10 +44,14 @@ class Reporter:
 
         # --- Summary ---
         lines.append("## Summary")
-        lines.append(f"- Candidates: **{stats.candidates_total}**")
-        lines.append(f"- Processed (kept for report): **{stats.processed}**")
+        lines.append(f"- Discovered (unique): **{stats.candidates_total}**")
+        lines.append(f"- Queued (new/updated): **{stats.queued}**")
+        lines.append(f"- No-op (unchanged/already tracked): **{stats.noop_unchanged}**")
+        lines.append(f"- Included in report: **{stats.processed}**")
         lines.append(f"- Skipped: **{stats.skipped}**")
-        lines.append(f"- LLM analyzed: **{stats.llm_analyzed}**")
+        lines.append(f"- LLM attempted: **{stats.llm_analyzed}**")
+        lines.append(f"- LLM succeeded: **{stats.llm_succeeded}**")
+        lines.append(f"- LLM failed: **{stats.llm_failed}**")
         lines.append("")
 
         # --- Skip reasons ---
@@ -59,12 +63,18 @@ class Reporter:
                 lines.append(f"- **{reason}**: {cnt}")
 
         # --- Top skipped uploaders ---
-        uploader_skips = Counter(item.author for item in stats.skip_items if item.author)
-        if uploader_skips:
+        if stats.skip_reasons_by_uploader:
             lines.append("")
             lines.append("## Top skipped uploaders")
-            for uploader, cnt in uploader_skips.most_common(15):
-                lines.append(f"- **{uploader}**: {cnt}")
+            # total skips per uploader
+            totals = Counter({u: sum(c.values()) for u, c in stats.skip_reasons_by_uploader.items()})
+            for uploader, cnt in totals.most_common(15):
+                top3 = stats.skip_reasons_by_uploader[uploader].most_common(3)
+                if top3:
+                    top3_str = ", ".join([f"{r} ({n})" for r, n in top3])
+                    lines.append(f"- **{uploader}**: {cnt} — top: {top3_str}")
+                else:
+                    lines.append(f"- **{uploader}**: {cnt}")
 
         # --- Processed models overview ---
         lines.append("")
