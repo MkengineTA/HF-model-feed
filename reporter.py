@@ -60,7 +60,7 @@ class Reporter:
             lines.append("- (none)")
         else:
             for reason, cnt in stats.top_skip_reasons(20):
-                lines.append(f"- **{reason}**: {cnt}")
+                lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
 
         # --- Top skipped uploaders ---
         if stats.skip_reasons_by_uploader:
@@ -71,10 +71,10 @@ class Reporter:
             for uploader, cnt in totals.most_common(15):
                 top3 = stats.skip_reasons_by_uploader[uploader].most_common(3)
                 if top3:
-                    top3_str = ", ".join([f"{r} ({n})" for r, n in top3])
-                    lines.append(f"- **{uploader}**: {cnt} — top: {top3_str}")
+                    top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3])
+                    lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt} — top: {top3_str}")
                 else:
-                    lines.append(f"- **{uploader}**: {cnt}")
+                    lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}")
 
         # --- Processed models overview ---
         lines.append("")
@@ -88,7 +88,7 @@ class Reporter:
             lines.append("")
             lines.append("### Top included uploaders")
             for uploader, cnt in included_uploaders.most_common(15):
-                lines.append(f"- **{uploader}**: {cnt}")
+                lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}")
 
             # Short table-ish list (top N)
             lines.append("")
@@ -102,14 +102,15 @@ class Reporter:
                 mid = m.get("id", "")
                 mid_display = self._escape_underscores(mid)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
+                uploader_display = self._escape_underscores(uploader)
                 a = m.get("llm_analysis") or {}
                 score = a.get("specialist_score", 0)
                 mtype = a.get("model_type", "N/A")
                 link = f"https://huggingface.co/{mid}" if mid else ""
                 if link:
-                    lines.append(f"- **[{mid_display}]({link})** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **[{mid_display}]({link})** — uploader: **{uploader_display}** — score: **{score}** — type: {mtype}")
                 else:
-                    lines.append(f"- **{mid_display}** — uploader: **{uploader}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **{mid_display}** — uploader: **{uploader_display}** — score: **{score}** — type: {mtype}")
 
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
@@ -150,6 +151,7 @@ class Reporter:
                 name = m.get("name") or (mid.split("/")[-1] if mid else "unknown")
                 name_display = self._escape_underscores(name)
                 uploader = m.get("namespace") or m.get("author") or "unknown"
+                uploader_display = self._escape_underscores(uploader)
                 a = m.get("llm_analysis") or {}
 
                 link = f"https://huggingface.co/{mid}" if mid else ""
@@ -167,7 +169,7 @@ class Reporter:
                 details.append("")
                 details.append(
                     f"**Model ID:** `{mid}`  \n"
-                    f"**Uploader:** **{uploader}**  \n"
+                    f"**Uploader:** **{uploader_display}**  \n"
                     f"**Author:** {kind_str} ({tier_str})  \n"
                     f"**Pipeline:** `{pipeline_tag}`  \n"
                     f"**Type:** {mtype}  \n"
