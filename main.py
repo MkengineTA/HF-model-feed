@@ -94,6 +94,7 @@ def main():
             info = hf_client.get_model_info(mid)
             add_candidate(info)
 
+    # Record discovered unique candidates
     stats.record_candidate_batch(len(candidates))
     logger.info(f"Total unique candidates: {len(candidates)}")
 
@@ -127,16 +128,16 @@ def main():
 
     processed_models = []
     author_run_cache = {}
+    # Run-level dedupe for spam uploads with identical model cards
+    seen_signatures = {}
 
     def skip(model_id: str, uploader: str | None, reason: str, **extra):
         stats.record_skip(model_id, reason, author=uploader, **extra)
         logger.info(f"Skipping {model_id}: {reason}")
 
-    stats.record_candidate_batch(len(processing_queue)) # Wait, adding queue size to total?
-    # candidates_total is sum of fetch batches.
-    # Here we are logging candidates passed to process queue (subset of total candidates that need update/new).
-    # The previous `record_candidate_batch` logged total found.
-    # Let's just log queue size.
+    # Set queue stats
+    stats.queued = len(processing_queue)
+    stats.noop_unchanged = max(0, len(candidates) - len(processing_queue))
     logger.info(f"Processing queue size: {len(processing_queue)}")
 
     for model_id, model_info, reason in processing_queue:
@@ -149,7 +150,7 @@ def main():
             if trace and isinstance(trace, list) and trace:
                 stats.record_skip(model_id, trace[0], author=uploader, trace=trace, **extra)
                 for r in trace[1:]:
-                    stats.skip_reasons[r] += 1
+                    stats.record_skip_reason_only(r, author=uploader)
             else:
                 stats.record_skip(model_id, primary_reason, author=uploader, **extra)
 
@@ -168,7 +169,7 @@ def main():
             continue
 
         # ---- Author tier cache ----
-        trust_tier = 1
+        trust_tier = 1 # Default to Low Trust (1)
         author_kind = "unknown"
 
         if namespace:
@@ -232,13 +233,17 @@ def main():
                     auth_data = dict(auth_entry)
 
                 if author_kind == "org":
-                    trust_tier = 3
+                    trust_tier = 3 # High Trust
                 elif author_kind == "user" and auth_data:
                     followers = auth_data.get("num_followers") or 0
                     is_pro = auth_data.get("is_pro") or 0
-                    trust_tier = 2 if (followers >= 200 or is_pro) else 1
+                    trust_tier = 2 if (followers >= 200 or is_pro) else 1 # 2=Mid, 1=Low
                 else:
-                    trust_tier = 1
+                    trust_tier = 1 # Low
+
+                # Whitelist override to Highest Trust (3)
+                if is_whitelisted:
+                    trust_tier = 3
 
                 author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
@@ -264,24 +269,25 @@ def main():
             filter_trace.append("skip:export_conversion")
 
         params_est = filters.extract_parameter_count(model_info, file_details)
-        if params_est and params_est > config.MAX_PARAMS_BILLIONS:
-            filter_trace.append(f"skip:params_too_large_{params_est:.1f}B")
+        # Params gate: do not hard-skip MoE hints solely by total params.
+        if params_est and params_est > config.MAX_PARAMS_BILLIONS and not filters.is_moe_hint(model_id, tags):
+            filter_trace.append("skip:params_too_large")
 
         if "skip:nsfw_excluded" in filter_trace:
             logger.info(f"Skipping {model_id}: {filter_trace}")
             record_skip_local("skip:nsfw_excluded", trace=filter_trace)
             continue
 
-        if any(x.startswith("skip:params_too_large_") for x in filter_trace):
+        if "skip:params_too_large" in filter_trace:
+            logger.info(f"Skipping {model_id}: {filter_trace}")
+            record_skip_local(filter_trace[0], trace=filter_trace, params_b=params_est)
+            continue
+
+        # Hard scope: never bypass these with whitelist (newsletter should not contain quant/exports or diffusion)
+        if "skip:generative_visual" in filter_trace or "skip:export_conversion" in filter_trace:
             logger.info(f"Skipping {model_id}: {filter_trace}")
             record_skip_local(filter_trace[0], trace=filter_trace)
             continue
-
-        if not is_whitelisted:
-            if "skip:generative_visual" in filter_trace or "skip:export_conversion" in filter_trace:
-                logger.info(f"Skipping {model_id}: {filter_trace}")
-                record_skip_local(filter_trace[0], trace=filter_trace)
-                continue
 
         # ---- Phase 1: README ----
         readme_content = hf_client.get_model_readme(model_id)
@@ -303,6 +309,14 @@ def main():
             skip(model_id, namespace, "skip:robotics_embodied")
             continue
 
+        # Canonical-only for mass-uploaded clones (BlockAssist)
+        if filters.is_blockassist_clone(model_id, namespace, tags, readme_content):
+            skip(
+                model_id, namespace, "skip:clone_of_canonical",
+                canonical="gensyn/blockassist"
+            )
+            continue
+
         # ---- Phase 2: Quality gate ----
         yaml_meta = extract_yaml_front_matter(readme_content)
         links_present = filters.has_external_links(readme_content)
@@ -310,6 +324,20 @@ def main():
         is_boilerplate = filters.is_boilerplate_readme(readme_content)
         has_more_info = filters.has_more_info_needed(readme_content)
         is_roleplay = filters.is_roleplay(model_id, tags)
+
+        # Skip "notebook ran -> uploaded" template finetunes (very common)
+        # Apply strict filters for Low Trust (Tier 1) AND Mid Trust (Tier 2) if desired,
+        # or just Tier 1. The requirement was "Rule (for Tier-1 User, optional also Tier-2)".
+        # Let's apply to Tier 1 (Low) and non-whitelisted.
+        # Wait, if `trust_tier` is 3 (High), we bypass. If 1 (Low), we apply.
+
+        if not is_whitelisted and trust_tier <= 1:
+            if filters.is_unsloth_template_finetune(readme_content, tags=tags):
+                skip(model_id, namespace, "skip:template_finetune_unsloth")
+                continue
+            if filters.is_finetune_from_quant_base(readme_content):
+                skip(model_id, namespace, "skip:finetune_from_quant_base")
+                continue
 
         if not is_whitelisted:
             if trust_tier <= 1:
@@ -327,6 +355,16 @@ def main():
                     skip(model_id, namespace, "skip:boilerplate_readme", trust_tier=trust_tier)
                     continue
 
+        # Run-level dedupe: identical model cards uploaded under many namespaces
+        sig = filters.compute_repo_signature(readme_content, file_details)
+        if sig in seen_signatures and seen_signatures[sig] != model_id:
+            skip(
+                model_id, namespace, "skip:duplicate_signature",
+                canonical=seen_signatures[sig]
+            )
+            continue
+        seen_signatures[sig] = model_id
+
         # ---- Phase 3: LLM analysis ----
         stats.record_llm_analyzed(model_id, uploader)
         logger.info(f"Analyzing {model_id} with LLM...")
@@ -336,8 +374,10 @@ def main():
 
         if not llm_result:
             logger.error(f"LLM analysis failed for {model_id}")
+            stats.record_llm_failed()
             skip(model_id, namespace, "skip:llm_error")
             continue
+        stats.record_llm_succeeded()
 
         report_note_evidence = "Evidence check: Passed"
         evidence = llm_result.get("evidence", [])
