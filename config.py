@@ -127,7 +127,14 @@ WHITELIST_NAMESPACES = {
     "vidore",
     "Wan-AI",
     "XiaomiMiMo",
-    "zai-org"
+    "zai-org",
+    "HIT-TMG",
+    "codefuse-ai",
+    "upstage",
+    "meituan-longcat",
+    "PrimeIntellect",
+    "CalmState",
+    "IQuestLab"
 }
 
 def _parse_csv_set(val):
