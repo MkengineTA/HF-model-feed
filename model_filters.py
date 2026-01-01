@@ -217,6 +217,27 @@ def is_roleplay(model_id: str, tags) -> bool:
     if "roleplay" in tagset or "rp" in tagset: return True
     return False
 
+def is_empty_or_stub_readme(readme: str) -> bool:
+    if not readme:
+        return True
+    txt = readme.strip().lower()
+    if len(txt) < 50:
+        return True
+    # Common stubs
+    stubs = ["upload", "update", "model", "test"]
+    if len(txt) < 100 and any(s in txt for s in stubs):
+        return True
+    return False
+
+def is_merge(model_id: str, readme: str) -> bool:
+    mid = (model_id or "").lower()
+    txt = (readme or "").lower()
+    if "merge" in mid and "kit" in mid:
+        return True
+    if "merged model" in txt or "mergekit" in txt:
+        return True
+    return False
+
 def compute_info_score(readme, yaml_meta, tags, links_present):
     """
     Simple heuristic 0-5.
