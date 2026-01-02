@@ -1,9 +1,14 @@
-import logging
+# main.py
+from __future__ import annotations
+
 import argparse
-from datetime import datetime, timezone
+import logging
 import re
+from datetime import datetime, timezone
 import yaml
 import dateutil.parser
+import unicodedata
+import string
 
 import config
 from utils import setup_logging
@@ -15,9 +20,9 @@ from mailer import Mailer
 import model_filters as filters
 from namespace_policy import classify_namespace
 from run_stats import RunStats
+from param_estimator import estimate_parameters, security_warnings
 
 logger = setup_logging()
-
 
 def extract_yaml_front_matter(readme_text: str | None):
     if not readme_text:
@@ -30,16 +35,32 @@ def extract_yaml_front_matter(readme_text: str | None):
             return None
     return None
 
+def _norm(s: str) -> str:
+    # robust for evidence quote checks (incl. full-width punctuation)
+    s = unicodedata.normalize("NFKC", s)
+    s = s.lower()
+    s = " ".join(s.split())
+    return s
 
 def quote_in_readme(quote: str, readme: str) -> bool:
     if not quote or not readme:
         return False
+
+    # Fast exact
     if quote in readme:
         return True
-    q = " ".join(quote.split()).lower()
-    r = " ".join(readme.split()).lower()
-    return q in r
 
+    # Normalized containment
+    q = _norm(quote)
+    r = _norm(readme)
+    if q in r:
+        return True
+
+    # Extra: strip punctuation for fuzzy matching
+    trans = str.maketrans("", "", string.punctuation + "，。、：；「」『』（）()[]{}")
+    q2 = q.translate(trans)
+    r2 = r.translate(trans)
+    return q2 in r2
 
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
@@ -70,7 +91,6 @@ def main():
     last_run_ts = db.get_last_run_timestamp()
     logger.info(f"Last successful run: {last_run_ts}")
 
-    # ---- Fetching candidates ----
     logger.info("Fetching models...")
     recent_models = hf_client.fetch_new_models(since=last_run_ts, limit=args.limit)
     updated_models = hf_client.fetch_recently_updated_models(since=last_run_ts, limit=args.limit)
@@ -94,7 +114,6 @@ def main():
             info = hf_client.get_model_info(mid)
             add_candidate(info)
 
-    # Record discovered unique candidates
     stats.record_candidate_batch(len(candidates))
     logger.info(f"Total unique candidates: {len(candidates)}")
 
@@ -126,19 +145,17 @@ def main():
         if should_process:
             processing_queue.append((model_id, model_info, reason))
 
+    stats.queued = len(processing_queue)
+    stats.noop_unchanged = max(0, len(candidates) - len(processing_queue))
+    logger.info(f"Processing queue size: {len(processing_queue)}")
+
     processed_models = []
     author_run_cache = {}
-    # Run-level dedupe for spam uploads with identical model cards
     seen_signatures = {}
 
     def skip(model_id: str, uploader: str | None, reason: str, **extra):
         stats.record_skip(model_id, reason, author=uploader, **extra)
         logger.info(f"Skipping {model_id}: {reason}")
-
-    # Set queue stats
-    stats.queued = len(processing_queue)
-    stats.noop_unchanged = max(0, len(candidates) - len(processing_queue))
-    logger.info(f"Processing queue size: {len(processing_queue)}")
 
     for model_id, model_info, reason in processing_queue:
         logger.info(f"Processing {model_id} ({reason})...")
@@ -146,30 +163,19 @@ def main():
         namespace = model_id.split("/")[0] if "/" in model_id else None
         uploader = namespace or "unknown"
 
-        def record_skip_local(primary_reason: str, *, trace=None, **extra):
-            if trace and isinstance(trace, list) and trace:
-                stats.record_skip(model_id, trace[0], author=uploader, trace=trace, **extra)
-                for r in trace[1:]:
-                    stats.record_skip_reason_only(r, author=uploader)
-            else:
-                stats.record_skip(model_id, primary_reason, author=uploader, **extra)
-
-        # ---- Namespace policy (early) ----
         decision, ns_reason = classify_namespace(uploader)
         is_whitelisted = (decision == "allow_whitelist")
 
         if decision == "deny_blacklist":
-            logger.info(f"Skipping {model_id}: {ns_reason}")
-            record_skip_local(ns_reason or "skip:blacklisted_namespace")
+            skip(model_id, uploader, ns_reason or "skip:blacklisted_namespace")
             continue
 
-        # Optional legacy exclusion
         if namespace and namespace.lower() in {x.lower() for x in getattr(config, "EXCLUDED_NAMESPACES", set())}:
             skip(model_id, namespace, "skip:excluded_namespace")
             continue
 
         # ---- Author tier cache ----
-        trust_tier = 1 # Default to Low Trust (1)
+        trust_tier = 1
         author_kind = "unknown"
 
         if namespace:
@@ -185,7 +191,6 @@ def main():
                         last_checked = dateutil.parser.parse(str(auth_entry["last_checked"]))
                         age_days = (datetime.now(timezone.utc) - last_checked).days
                         kind_db = auth_entry["kind"]
-
                         if kind_db in ("user", "org") and age_days < 14:
                             cache_valid = True
                         if kind_db == "unknown":
@@ -196,15 +201,12 @@ def main():
                 if not cache_valid:
                     logger.info(f"Validating author: {namespace}")
                     org_data = hf_client.get_org_details(namespace)
-
                     if org_data:
                         author_kind = "org"
                         auth_data = {"namespace": namespace, "kind": "org", "raw_json": org_data}
                         db.upsert_author(auth_data)
-
-                    elif org_data == {}:  # Not an org -> user check
+                    elif org_data == {}:
                         user_data = hf_client.get_user_overview(namespace)
-
                         if user_data:
                             author_kind = "user"
                             auth_data = {
@@ -216,12 +218,10 @@ def main():
                                 "raw_json": user_data,
                             }
                             db.upsert_author(auth_data)
-
                         elif user_data == {}:
                             author_kind = "unknown"
                             auth_data = {"namespace": namespace, "kind": "unknown", "raw_json": {}}
                             db.upsert_author(auth_data)
-
                         else:
                             author_kind = "unknown"
                             auth_data = None
@@ -233,15 +233,14 @@ def main():
                     auth_data = dict(auth_entry)
 
                 if author_kind == "org":
-                    trust_tier = 3 # High Trust
+                    trust_tier = 3
                 elif author_kind == "user" and auth_data:
                     followers = auth_data.get("num_followers") or 0
                     is_pro = auth_data.get("is_pro") or 0
-                    trust_tier = 2 if (followers >= 200 or is_pro) else 1 # 2=Mid, 1=Low
+                    trust_tier = 2 if (followers >= 200 or is_pro) else 1
                 else:
-                    trust_tier = 1 # Low
+                    trust_tier = 1
 
-                # Whitelist override to Highest Trust (3)
                 if is_whitelisted:
                     trust_tier = 3
 
@@ -249,15 +248,16 @@ def main():
 
         logger.info(f"Author: {uploader} | Kind: {author_kind} | Tier: {trust_tier}")
 
-        filter_trace = []
+        filter_trace: list[str] = []
         tags = getattr(model_info, "tags", None) or []
 
-        # ---- Phase 0: Security & hard scope ----
+        # ---- Phase 0: hard scope / security warnings ----
         file_details = hf_client.get_model_file_details(model_id)
-        if not filters.is_secure(file_details):
-            logger.warning(f"Skipping {model_id}: Security check failed")
-            skip(model_id, namespace, "skip:security_failed")
-            continue
+
+        # security warnings (never skip)
+        for w_reason, w_extra in security_warnings(file_details):
+            stats.record_warn(model_id, w_reason, author=uploader, **w_extra)
+            filter_trace.append(w_reason)
 
         if filters.is_generative_visual(model_info, tags):
             filter_trace.append("skip:generative_visual")
@@ -268,53 +268,34 @@ def main():
         if filters.is_export_or_conversion(model_id, tags, file_details):
             filter_trace.append("skip:export_conversion")
 
-        params_est = filters.extract_parameter_count(model_info, file_details)
-        # Params gate: do not hard-skip MoE hints solely by total params.
-        if params_est and params_est > config.MAX_PARAMS_BILLIONS and not filters.is_moe_hint(model_id, tags):
-            filter_trace.append("skip:params_too_large")
-
         if "skip:nsfw_excluded" in filter_trace:
-            logger.info(f"Skipping {model_id}: {filter_trace}")
-            record_skip_local("skip:nsfw_excluded", trace=filter_trace)
+            skip(model_id, uploader, "skip:nsfw_excluded", trace=filter_trace)
             continue
 
-        if "skip:params_too_large" in filter_trace:
-            logger.info(f"Skipping {model_id}: {filter_trace}")
-            record_skip_local(filter_trace[0], trace=filter_trace, params_b=params_est)
-            continue
-
-        # Hard scope: never bypass these with whitelist (newsletter should not contain quant/exports or diffusion)
         if "skip:generative_visual" in filter_trace or "skip:export_conversion" in filter_trace:
-            logger.info(f"Skipping {model_id}: {filter_trace}")
-            record_skip_local(filter_trace[0], trace=filter_trace)
+            skip(model_id, uploader, filter_trace[0], trace=filter_trace)
             continue
 
         # ---- Phase 1: README ----
         readme_content = hf_client.get_model_readme(model_id)
         if not readme_content:
-            logger.info(f"Skipping {model_id}: No README")
-            skip(model_id, namespace, "skip:no_readme")
+            skip(model_id, uploader, "skip:no_readme")
             continue
 
         if filters.is_empty_or_stub_readme(readme_content):
-            logger.info(f"Skipping {model_id}: Empty/Stub README")
-            skip(model_id, namespace, "skip:empty_readme")
+            skip(model_id, uploader, "skip:empty_readme")
             continue
 
         if filters.is_merge(model_id, readme_content):
-            skip(model_id, namespace, "skip:merge_model")
+            skip(model_id, uploader, "skip:merge_model")
             continue
 
         if filters.is_robotics_but_keep_vqa(model_info, tags, readme_content):
-            skip(model_id, namespace, "skip:robotics_embodied")
+            skip(model_id, uploader, "skip:robotics_embodied")
             continue
 
-        # Canonical-only for mass-uploaded clones (BlockAssist)
         if filters.is_blockassist_clone(model_id, namespace, tags, readme_content):
-            skip(
-                model_id, namespace, "skip:clone_of_canonical",
-                canonical="gensyn/blockassist"
-            )
+            skip(model_id, uploader, "skip:clone_of_canonical", canonical="gensyn/blockassist")
             continue
 
         # ---- Phase 2: Quality gate ----
@@ -325,74 +306,77 @@ def main():
         has_more_info = filters.has_more_info_needed(readme_content)
         is_roleplay = filters.is_roleplay(model_id, tags)
 
-        # Skip "notebook ran -> uploaded" template finetunes (very common)
-        # Apply strict filters for Low Trust (Tier 1) AND Mid Trust (Tier 2) if desired,
-        # or just Tier 1. The requirement was "Rule (for Tier-1 User, optional also Tier-2)".
-        # Let's apply to Tier 1 (Low) and non-whitelisted.
-        # Wait, if `trust_tier` is 3 (High), we bypass. If 1 (Low), we apply.
-
         if not is_whitelisted and trust_tier <= 1:
             if filters.is_unsloth_template_finetune(readme_content, tags=tags):
-                skip(model_id, namespace, "skip:template_finetune_unsloth")
+                skip(model_id, uploader, "skip:template_finetune_unsloth")
                 continue
             if filters.is_finetune_from_quant_base(readme_content):
-                skip(model_id, namespace, "skip:finetune_from_quant_base")
+                skip(model_id, uploader, "skip:finetune_from_quant_base")
                 continue
 
         if not is_whitelisted:
             if trust_tier <= 1:
                 if is_roleplay:
-                    skip(model_id, namespace, "skip:roleplay_content")
+                    skip(model_id, uploader, "skip:roleplay_content")
                     continue
                 if is_boilerplate or has_more_info:
-                    skip(model_id, namespace, "skip:boilerplate_readme")
+                    skip(model_id, uploader, "skip:boilerplate_readme")
                     continue
                 if info_score < 3 and not links_present:
-                    skip(model_id, namespace, "skip:low_info_score", info_score=info_score, links_present=links_present)
+                    skip(model_id, uploader, "skip:low_info_score", info_score=info_score, links_present=links_present)
                     continue
             else:
                 if is_boilerplate or has_more_info:
-                    skip(model_id, namespace, "skip:boilerplate_readme", trust_tier=trust_tier)
+                    skip(model_id, uploader, "skip:boilerplate_readme", trust_tier=trust_tier)
                     continue
 
-        # Run-level dedupe: identical model cards uploaded under many namespaces
         sig = filters.compute_repo_signature(readme_content, file_details)
         if sig in seen_signatures and seen_signatures[sig] != model_id:
-            skip(
-                model_id, namespace, "skip:duplicate_signature",
-                canonical=seen_signatures[sig]
-            )
+            skip(model_id, uploader, "skip:duplicate_signature", canonical=seen_signatures[sig])
             continue
         seen_signatures[sig] = model_id
+
+        # ---- Phase 2.5: Parameter gate (total + active) ----
+        pe = estimate_parameters(hf_client.api, model_id, file_details)
+
+        # Skip if thresholds exceeded (either one)
+        if pe.total_b is not None and pe.total_b > config.MAX_TOTAL_PARAMS_BILLIONS:
+            skip(model_id, uploader, "skip:params_total_too_large", total_b=pe.total_b, max_total_b=config.MAX_TOTAL_PARAMS_BILLIONS, source=pe.source)
+            continue
+        if pe.active_b is not None and pe.active_b > config.MAX_ACTIVE_PARAMS_BILLIONS:
+            skip(model_id, uploader, "skip:params_active_too_large", active_b=pe.active_b, max_active_b=config.MAX_ACTIVE_PARAMS_BILLIONS, source=pe.source)
+            continue
 
         # ---- Phase 3: LLM analysis ----
         stats.record_llm_analyzed(model_id, uploader)
         logger.info(f"Analyzing {model_id} with LLM...")
-        llm_result = llm_client.analyze_model(
-            readme_content, tags, yaml_meta=yaml_meta, file_summary=file_details
-        )
+        llm_result = llm_client.analyze_model(readme_content, tags, yaml_meta=yaml_meta, file_summary=file_details)
 
         if not llm_result:
-            logger.error(f"LLM analysis failed for {model_id}")
             stats.record_llm_failed()
-            skip(model_id, namespace, "skip:llm_error")
+            skip(model_id, uploader, "skip:llm_error")
             continue
         stats.record_llm_succeeded()
 
-        report_note_evidence = "Evidence check: Passed"
-        evidence = llm_result.get("evidence", [])
-        any_mismatch = False
-        for item in evidence:
-            quote = item.get("quote", "")
-            if quote and not quote_in_readme(quote, readme_content):
-                logger.warning(f"Evidence mismatch: {quote[:60]}...")
-                any_mismatch = True
-
-        if any_mismatch:
-            llm_result["confidence"] = "low"
-            report_note_evidence = "Evidence check: Mismatch"
-
-        logger.info(f"Analysis complete: Score {llm_result.get('specialist_score')}")
+        # Evidence check (internal)
+        report_notes = []
+        if config.LLM_REQUIRE_EVIDENCE:
+            evidence = llm_result.get("evidence", []) or []
+            any_mismatch = False
+            if not evidence:
+                llm_result["confidence"] = "low"
+                report_notes.append("Evidence: Missing")
+            else:
+                for item in evidence:
+                    quote = item.get("quote", "")
+                    if quote and not quote_in_readme(quote, readme_content):
+                        any_mismatch = True
+                        break
+                if any_mismatch:
+                    llm_result["confidence"] = "low"
+                    report_notes.append("Evidence: Mismatch")
+                else:
+                    report_notes.append("Evidence: Passed")
 
         model_data = {
             "id": model_id,
@@ -400,7 +384,13 @@ def main():
             "author": uploader,
             "created_at": getattr(model_info, "created_at", None),
             "last_modified": getattr(model_info, "lastModified", None),
-            "params_est": params_est,
+
+            # keep legacy params_est as total
+            "params_est": pe.total_b,
+            "params_total_b": pe.total_b,
+            "params_active_b": pe.active_b,
+            "params_source": pe.source,
+
             "hf_tags": tags,
             "llm_analysis": llm_result,
             "status": "processed",
@@ -409,35 +399,29 @@ def main():
             "trust_tier": trust_tier,
             "pipeline_tag": filters.get_pipeline_tag(model_info),
             "filter_trace": filter_trace,
-            "report_notes": report_note_evidence,
+            "report_notes": " | ".join(report_notes) if report_notes else "",
         }
 
         if not args.dry_run:
             db.save_model(model_data)
 
-        min_score = getattr(config, "MIN_SPECIALIST_SCORE", 0)
-        exclude_review = getattr(config, "EXCLUDE_REVIEW_REQUIRED", False)
-
         score = int((llm_result or {}).get("specialist_score", 0) or 0)
         keep_for_report = True
-
-        if exclude_review and model_data.get("status") != "processed":
+        if config.EXCLUDE_REVIEW_REQUIRED and model_data.get("status") != "processed":
             keep_for_report = False
-        if score < min_score:
+        if score < config.MIN_SPECIALIST_SCORE:
             keep_for_report = False
 
         if keep_for_report:
             processed_models.append(model_data)
             stats.record_processed(model_id, uploader)
         else:
-            skip(model_id, namespace, "skip:report_filtered", score=score, min_score=min_score)
+            skip(model_id, uploader, "skip:report_filtered", score=score, min_score=config.MIN_SPECIALIST_SCORE)
 
-    if processed_models or stats.skipped > 0: # Always report if we did anything
+    if processed_models or stats.skipped > 0 or stats.warned > 0:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")
-
         md_path = reporter.generate_full_report(stats, processed_models, date_str=date_str)
         reporter.export_csv(processed_models)
-
         logger.info(stats.summary_line())
 
         if not args.dry_run or args.force_email:
@@ -452,7 +436,6 @@ def main():
 
     if not args.dry_run:
         db.set_last_run_timestamp(current_run_time)
-
 
 if __name__ == "__main__":
     main()
