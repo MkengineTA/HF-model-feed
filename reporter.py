@@ -192,11 +192,13 @@ class Reporter:
                     details.append("#### Delta")
                     if what_changed:
                         details.append("**Was ist neu?**")
+                        details.append("")
                         for x in what_changed:
                             details.append(f"- {x}")
                     if why_matters:
                         details.append("")
                         details.append("**Warum relevant?**")
+                        details.append("")
                         for x in why_matters:
                             details.append(f"- {x}")
                     details.append("")
@@ -206,6 +208,7 @@ class Reporter:
                 if use_cases:
                     details.append("#### Manufacturing")
                     details.append("**Use cases**")
+                    details.append("")
                     for x in use_cases:
                         details.append(f"- {x}")
                     details.append("")
@@ -223,13 +226,6 @@ class Reporter:
                                 details.append(f"  - Quote: “{quote}”")
                         details.append("")
 
-                unknowns = a.get("unknowns") or []
-                confidence = a.get("confidence", "low")
-                if unknowns:
-                    details.append(f"_Confidence: **{confidence}** | Unknowns: {', '.join(unknowns)}_")
-                else:
-                    details.append(f"_Confidence: **{confidence}**_")
-                details.append("")
                 details.append("---")
                 details.append("")
 
