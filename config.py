@@ -134,7 +134,10 @@ WHITELIST_NAMESPACES = {
     "meituan-longcat",
     "PrimeIntellect",
     "CalmState",
-    "IQuestLab"
+    "IQuestLab",
+    "naver-hyperclovax",
+    "NC-AI-consortium-VAETKI",
+    "LGAI-EXAONE"
 }
 
 def _parse_csv_set(val):
