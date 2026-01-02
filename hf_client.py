@@ -1,22 +1,23 @@
-from huggingface_hub import HfApi, hf_hub_download
-from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
+# hf_client.py
+from __future__ import annotations
+
 import logging
 import requests
-from datetime import datetime, timezone
 import time
+from datetime import datetime, timezone
+
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 
 logger = logging.getLogger("EdgeAIScout")
 
 class HFClient:
-    def __init__(self, token=None):
+    def __init__(self, token: str | None = None):
         self.api = HfApi(token=token)
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.base_url = "https://huggingface.co/api"
 
     def _make_request(self, method, url, params=None, max_retries=3, headers=None):
-        """
-        Helper to make requests with retry logic for 429 errors.
-        """
         req_headers = headers if headers is not None else self.headers
         for i in range(max_retries):
             try:
@@ -42,7 +43,7 @@ class HFClient:
                 direction="-1",
                 limit=limit,
                 full=False,
-                fetch_config=True
+                fetch_config=True,
             )
             candidates = []
             for m in models_iter:
@@ -61,7 +62,7 @@ class HFClient:
                 direction="-1",
                 limit=limit,
                 full=False,
-                fetch_config=True
+                fetch_config=True,
             )
             candidates = []
             for m in models_iter:
@@ -84,7 +85,7 @@ class HFClient:
                 for item in data.get("recentlyTrending", []):
                     repo_data = item.get("repoData", {})
                     if repo_data:
-                         models.append(repo_data.get("id"))
+                        models.append(repo_data.get("id"))
                 return models
             return []
         except Exception as e:
@@ -105,14 +106,17 @@ class HFClient:
                     if project_page and "huggingface.co/" in project_page:
                         part = project_page.split("huggingface.co/")[-1].split("?")[0].strip("/")
                         if "/" in part and len(part.split("/")) >= 2:
-                             model_ids.append(part)
+                            model_ids.append(part)
                 return list(set(model_ids))
             return []
         except Exception as e:
             logger.error(f"Error fetching daily papers: {e}")
             return []
 
-    def get_model_file_details(self, model_id):
+    def get_model_file_details(self, model_id: str):
+        """
+        Uses Hub API tree endpoint (expand=true) so we can read sizes/security info.
+        """
         try:
             url = f"{self.base_url}/models/{model_id}/tree/main"
             params = {"recursive": "true", "expand": "true"}
@@ -128,25 +132,26 @@ class HFClient:
             logger.error(f"Error fetching file details for {model_id}: {e}")
             return None
 
-    def get_model_readme(self, model_id):
-        # 1) fast path: README.md
+    def get_model_readme(self, model_id: str):
+        # 1) README.md
         try:
             readme_path = hf_hub_download(repo_id=model_id, filename="README.md")
-            with open(readme_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(readme_path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read()
         except (RepositoryNotFoundError, RevisionNotFoundError):
-            pass # Try fallbacks
+            pass
         except Exception as e:
             logger.warning(f"README.md fetch failed for {model_id}: {e}")
 
-        # 2) fallback: look for other readme-ish files via tree
+        # 2) fallback: search other readme files
         files = self.get_model_file_details(model_id)
         if isinstance(files, list):
             import re
             candidates = []
             for item in files:
                 path = (item.get("path") or "").strip()
-                if not path: continue
+                if not path:
+                    continue
                 low = path.lower()
                 if low in ("readme.md", "readme.mdown", "readme.markdown", "modelcard.md"):
                     candidates.append(path)
@@ -163,7 +168,7 @@ class HFClient:
                 except Exception:
                     continue
 
-        # 3) last fallback: use model card metadata (if present)
+        # 3) last fallback: card metadata
         info = self.get_model_info(model_id)
         if info:
             card = getattr(info, "cardData", None) or getattr(info, "card_data", None)
@@ -172,74 +177,44 @@ class HFClient:
 
         return None
 
-    def get_model_info(self, model_id):
+    def get_model_info(self, model_id: str):
         try:
             return self.api.model_info(model_id, files_metadata=True)
         except Exception as e:
             logger.warning(f"Could not fetch info for {model_id}: {e}")
             return None
 
-    # --- New Author/Org Methods (Tri-State with Avatar Check) ---
+    # --- Author/Org Methods ---
 
-    def get_org_details(self, namespace):
-        """
-        Returns:
-        - dict: if Org exists (200) - using avatar endpoint as proxy
-        - {}: if Org not found (404)
-        - None: if error/transient
-        """
+    def get_org_details(self, namespace: str):
         url = f"{self.base_url}/organizations/{namespace}/avatar"
         try:
-            # Check avatar without redirects if possible, or just checking 200
-            # Adding redirect=null param might stop redirect if API supports it,
-            # otherwise it redirects to CDN which returns 200 (image).
-            # We just need to know if the endpoint accepts the org name.
             resp = self._make_request("GET", url, headers={})
             if resp is None:
                 return None
-
-            logger.debug(f"Org check {namespace}: {resp.status_code}")
-
             if resp.status_code == 200:
-                # It exists. Return dummy dict or parse if JSON
-                # Avatar endpoint usually returns image bytes if existing?
-                # Or JSON if using API?
-                # User said: "response.json() # e.g. {'avatarUrl': ...}"
-                # Let's try .json(), if fails assume image -> exists.
                 try:
                     return resp.json()
-                except:
+                except Exception:
                     return {"exists": True}
-
             if resp.status_code == 404:
-                return {} # Definite not found
-
+                return {}
             logger.warning(f"Org check unexpected status {resp.status_code} for {namespace}")
             return None
         except Exception as e:
             logger.warning(f"Org check failed for {namespace}: {e}")
             return None
 
-    def get_user_overview(self, namespace):
-        """
-        Returns:
-        - dict: if User exists (200)
-        - {}: if User not found (404)
-        - None: if error/transient
-        """
+    def get_user_overview(self, namespace: str):
         url = f"{self.base_url}/users/{namespace}/overview"
         try:
             resp = self._make_request("GET", url, headers={})
             if resp is None:
                 return None
-
-            logger.debug(f"User check {namespace}: {resp.status_code}")
-
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code == 404:
                 return {}
-
             logger.warning(f"User check unexpected status {resp.status_code} for {namespace}")
             return None
         except Exception as e:

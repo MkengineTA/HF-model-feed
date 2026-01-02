@@ -1,3 +1,4 @@
+# reporter.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,8 +8,8 @@ from collections import Counter
 import csv
 import os
 
+import config
 from run_stats import RunStats
-
 
 class Reporter:
     def __init__(self, output_dir: str = "."):
@@ -16,12 +17,7 @@ class Reporter:
 
     @staticmethod
     def _escape_underscores(text: str) -> str:
-        """
-        Escapes underscores so model names render correctly in Markdown.
-        """
-        if not text:
-            return text
-        return text.replace("_", r"\_")
+        return text.replace("_", r"\_") if text else text
 
     def write_markdown_report(
         self,
@@ -42,19 +38,18 @@ class Reporter:
         lines.append(f"# EdgeAIScout Report ({date_str})")
         lines.append("")
 
-        # --- Summary ---
         lines.append("## Summary")
         lines.append(f"- Discovered (unique): **{stats.candidates_total}**")
         lines.append(f"- Queued (new/updated): **{stats.queued}**")
         lines.append(f"- No-op (unchanged/already tracked): **{stats.noop_unchanged}**")
         lines.append(f"- Included in report: **{stats.processed}**")
         lines.append(f"- Skipped: **{stats.skipped}**")
+        lines.append(f"- Warnings: **{stats.warned}**")
         lines.append(f"- LLM attempted: **{stats.llm_analyzed}**")
         lines.append(f"- LLM succeeded: **{stats.llm_succeeded}**")
         lines.append(f"- LLM failed: **{stats.llm_failed}**")
         lines.append("")
 
-        # --- Skip reasons ---
         lines.append("## Top skip reasons")
         if not stats.skip_reasons:
             lines.append("- (none)")
@@ -62,38 +57,38 @@ class Reporter:
             for reason, cnt in stats.top_skip_reasons(20):
                 lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
 
-        # --- Top skipped uploaders ---
+        lines.append("")
+        lines.append("## Top warning reasons")
+        if not stats.warn_reasons:
+            lines.append("- (none)")
+        else:
+            for reason, cnt in stats.top_warn_reasons(20):
+                lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
+
         if stats.skip_reasons_by_uploader:
             lines.append("")
             lines.append("## Top skipped uploaders")
-            # total skips per uploader
             totals = Counter({u: sum(c.values()) for u, c in stats.skip_reasons_by_uploader.items()})
             for uploader, cnt in totals.most_common(15):
                 top3 = stats.skip_reasons_by_uploader[uploader].most_common(3)
-                if top3:
-                    top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3])
-                    lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt} — top: {top3_str}")
-                else:
-                    lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}")
+                top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3]) if top3 else ""
+                lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}" + (f" — top: {top3_str}" if top3_str else ""))
 
-        # --- Processed models overview ---
         lines.append("")
         lines.append("## Processed models (overview)")
 
         if not processed_models:
             lines.append("No models met the criteria for this report.")
         else:
-            # Top included uploaders
             included_uploaders = Counter((m.get("namespace") or m.get("author") or "unknown") for m in processed_models)
             lines.append("")
             lines.append("### Top included uploaders")
             for uploader, cnt in included_uploaders.most_common(15):
                 lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}")
 
-            # Short table-ish list (top N)
             lines.append("")
             lines.append("### Models")
-            # sort by score desc, then id
+
             def _score(m: Dict[str, Any]) -> int:
                 a = m.get("llm_analysis") or {}
                 return int(a.get("specialist_score", 0) or 0)
@@ -115,15 +110,7 @@ class Reporter:
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
 
-    def generate_full_report(
-        self,
-        stats: RunStats,
-        processed_models: List[Dict[str, Any]],
-        date_str: Optional[str] = None
-    ) -> Path:
-        """
-        Writes a base report (stats + overview) and appends detailed model cards.
-        """
+    def generate_full_report(self, stats: RunStats, processed_models: List[Dict[str, Any]], date_str: Optional[str] = None) -> Path:
         path = self.write_markdown_report(stats, processed_models=processed_models, date_str=date_str)
         base_content = path.read_text(encoding="utf-8")
 
@@ -135,16 +122,11 @@ class Reporter:
         if not processed_models:
             details.append("- No processed models to display.")
         else:
-            # Sort by score desc
             def _score(m: Dict[str, Any]) -> int:
                 a = m.get("llm_analysis") or {}
                 return int(a.get("specialist_score", 0) or 0)
 
-            processed_models_sorted = sorted(
-                processed_models,
-                key=lambda x: (_score(x), x.get("id", "")),
-                reverse=True
-            )
+            processed_models_sorted = sorted(processed_models, key=lambda x: (_score(x), x.get("id", "")), reverse=True)
 
             for m in processed_models_sorted:
                 mid = m.get("id", "")
@@ -157,8 +139,18 @@ class Reporter:
                 link = f"https://huggingface.co/{mid}" if mid else ""
                 score = a.get("specialist_score", 0)
                 mtype = a.get("model_type", "N/A")
-                params = a.get("params_m")
-                params_str = f"{params}M" if params else "Unknown"
+
+                # Params: show total + active if available
+                total_b = m.get("params_total_b")
+                active_b = m.get("params_active_b")
+                src = m.get("params_source") or "unknown"
+                if total_b is None and active_b is None:
+                    params_str = "Unknown"
+                elif total_b is not None and active_b is not None:
+                    params_str = f"total={total_b}B, active={active_b}B ({src})"
+                else:
+                    params_str = f"{total_b or active_b}B ({src})"
+
                 kind_str = m.get("author_kind", "unknown")
                 tier_str = f"Tier {m.get('trust_tier', '?')}"
                 pipeline_tag = (m.get("pipeline_tag") or "unknown").lower()
@@ -209,41 +201,27 @@ class Reporter:
                             details.append(f"- {x}")
                     details.append("")
 
-                edge = a.get("edge") or {}
-                dep_notes = edge.get("deployment_notes") or []
-                if dep_notes:
-                    details.append("#### Deployment notes")
-                    for x in dep_notes:
+                manu = a.get("manufacturing") or {}
+                use_cases = manu.get("use_cases") or []
+                if use_cases:
+                    details.append("#### Manufacturing")
+                    details.append("**Use cases**")
+                    for x in use_cases:
                         details.append(f"- {x}")
                     details.append("")
 
-                manu = a.get("manufacturing") or {}
-                use_cases = manu.get("use_cases") or []
-                risks = manu.get("risks") or []
-                if use_cases or risks:
-                    details.append("#### Manufacturing")
-                    if use_cases:
-                        details.append("**Use cases**")
-                        for x in use_cases:
-                            details.append(f"- {x}")
-                    if risks:
+                if config.REPORT_INCLUDE_EVIDENCE:
+                    evidence = a.get("evidence") or []
+                    if evidence:
+                        details.append("#### Evidence (quotes)")
+                        for e in evidence[:4]:
+                            claim = (e.get("claim") or "").strip()
+                            quote = (e.get("quote") or "").strip()
+                            if claim:
+                                details.append(f"- **Claim:** {claim}")
+                            if quote:
+                                details.append(f"  - Quote: “{quote}”")
                         details.append("")
-                        details.append("**Risks**")
-                        for x in risks:
-                            details.append(f"- {x}")
-                    details.append("")
-
-                evidence = a.get("evidence") or []
-                if evidence:
-                    details.append("#### Evidence (quotes)")
-                    for e in evidence[:4]:
-                        claim = (e.get("claim") or "").strip()
-                        quote = (e.get("quote") or "").strip()
-                        if claim:
-                            details.append(f"- **Claim:** {claim}")
-                        if quote:
-                            details.append(f"  - Quote: “{quote}”")
-                    details.append("")
 
                 unknowns = a.get("unknowns") or []
                 confidence = a.get("confidence", "low")
@@ -260,9 +238,6 @@ class Reporter:
         return path
 
     def export_csv(self, models: List[Dict[str, Any]], filename: str = "labeling_pending.csv") -> str:
-        """
-        Appends to CSV (keeps previous behavior), but now includes uploader.
-        """
         filepath = os.path.join(self.output_dir, filename)
         file_exists = os.path.exists(filepath)
 
@@ -274,9 +249,12 @@ class Reporter:
                     "Uploader",
                     "Typ",
                     "Score",
+                    "Params_total_B",
+                    "Params_active_B",
+                    "Params_source",
                     "Blurb",
                     "Key Facts",
-                    "Manufacturing Use Cases"
+                    "Manufacturing Use Cases",
                 ])
 
             for m in models:
@@ -286,6 +264,9 @@ class Reporter:
                     m.get("namespace") or m.get("author") or "",
                     a.get("model_type", ""),
                     a.get("specialist_score", 0),
+                    m.get("params_total_b"),
+                    m.get("params_active_b"),
+                    m.get("params_source"),
                     a.get("newsletter_blurb", ""),
                     " | ".join(a.get("key_facts", []) or []),
                     " | ".join((a.get("manufacturing", {}) or {}).get("use_cases", []) or []),

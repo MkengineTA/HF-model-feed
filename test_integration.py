@@ -13,6 +13,7 @@ import config
 import model_filters as filters
 from namespace_policy import classify_namespace
 from run_stats import RunStats
+from param_estimator import ParamEstimate
 
 class TestIntegration(unittest.TestCase):
 
@@ -21,10 +22,10 @@ class TestIntegration(unittest.TestCase):
     @patch('main.LLMClient')
     @patch('main.Reporter')
     @patch('main.Mailer')
-    @patch('model_filters.extract_parameter_count')
-    @patch('model_filters.is_secure')
+    @patch('main.estimate_parameters')
+    @patch('main.security_warnings')
     @patch('builtins.open', new_callable=mock_open, read_data="# Report Content")
-    def test_full_flow(self, mock_file, mock_is_secure, mock_extract_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
+    def test_full_flow(self, mock_file, mock_security_warnings, mock_estimate_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
         # Setup Mocks
 
         # Database
@@ -42,10 +43,6 @@ class TestIntegration(unittest.TestCase):
         mock_db_instance.get_model_last_modified.side_effect = side_effect_last_mod
 
         # Author cache mock
-        # namespace "new" -> unknown (fetch)
-        # namespace "updated-model" -> user (cached)
-        # namespace "trending" -> org (fetch)
-
         def side_effect_get_author(ns):
             if ns == "updated-model":
                 return {'kind': 'user', 'last_checked': datetime.now(timezone.utc)}
@@ -56,9 +53,6 @@ class TestIntegration(unittest.TestCase):
         mock_hf_instance = MockHFClient.return_value
 
         # Author details
-        # trending -> Org (exists)
-        # new -> Not Org (404), User (exists)
-        # updated-model -> User (cached, but if called, returns dict)
         mock_hf_instance.get_org_details.side_effect = lambda ns: {'id': 'org1'} if ns == 'trending' else {} if ns == 'new' else {} if ns == 'updated-model' else None
         mock_hf_instance.get_user_overview.side_effect = lambda ns: {'numFollowers': 50, 'isPro': False} if ns == 'new' else {'numFollowers': 100} if ns == 'updated-model' else None
 
@@ -73,7 +67,6 @@ class TestIntegration(unittest.TestCase):
         m_updated.id = "updated-model/456"
         m_updated.tags = ["vision"]
         m_updated.created_at = datetime.now(timezone.utc) - timedelta(days=10)
-        # Ensure API time is significantly newer
         m_updated.lastModified = datetime.now(timezone.utc) + timedelta(hours=1)
 
         m_trending = MagicMock()
@@ -93,13 +86,36 @@ class TestIntegration(unittest.TestCase):
         mock_hf_instance.fetch_daily_papers.return_value = []
 
         mock_hf_instance.get_model_file_details.return_value = []
-        mock_is_secure.return_value = True
-        mock_extract_params.return_value = 7.0
-        # Boost info score: base_model, dataset, license
-        mock_hf_instance.get_model_readme.return_value = "Detailed readme content with base_model: llama, dataset: c4, license: mit. " * 20
+
+        # Security warnings (empty list = secure)
+        mock_security_warnings.return_value = []
+
+        # Param Estimation using new Dataclass
+        mock_estimate_params.return_value = ParamEstimate(
+            total_params=7000000000,
+            active_params=7000000000,
+            total_b=7.0,
+            active_b=7.0,
+            source="test",
+            dtype_breakdown=None,
+            is_moe=False,
+            experts="Dense",
+            notes=[]
+        )
+
+        # Unique readmes to avoid duplicate signature skipping
+        def side_effect_readme(mid):
+            base = "Detailed readme content with base_model: llama, dataset: c4, license: mit. " * 20
+            return f"{base} ID: {mid}" # Append ID to make unique
+
+        mock_hf_instance.get_model_readme.side_effect = side_effect_readme
 
         # LLM - New Comprehensive Structure with Evidence
         mock_llm_instance = MockLLMClient.return_value
+        # NOTE: The evidence quote must match what is in the README!
+        # Our side_effect_readme adds the ID at the end. The base text is constant.
+        # So we should use the base text or a part of it for the quote.
+
         mock_llm_instance.analyze_model.return_value = {
             "model_type": "Finetune",
             "base_model": "llama-2",
@@ -115,12 +131,11 @@ class TestIntegration(unittest.TestCase):
             "edge": {
                 "edge_ready": True,
                 "min_vram_gb": 8,
-                "deployment_notes": ["Use int8"]
+                "quantization": ["int8"]
             },
             "manufacturing": {
                 "manufacturing_fit_score": 9,
-                "use_cases": ["Defect detection"],
-                "risks": ["None"]
+                "use_cases": ["Defect detection"]
             },
             "specialist_score": 9,
             "confidence": "high",
