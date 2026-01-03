@@ -30,7 +30,7 @@ class Reporter:
 
         if val < 1:
             rounded_b = round(val, 2)
-            millions = int(rounded_b * 1000)
+            millions = round(rounded_b * 1000)
             return f"{millions}M"
 
         if val < 2:
