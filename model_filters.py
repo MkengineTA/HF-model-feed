@@ -8,19 +8,20 @@ from urllib.parse import urlparse
 
 # Robotics-specific terms for substring matching (safe for use with `in`)
 # Only long, unambiguous terms that won't match common words
+# Removed generic terms: "kinematics", "actuator", "manipulation" (can appear in non-robotics contexts)
 ROBOTICS_KEYWORDS_SUBSTRING = [
-    "robot", "robotics", "robotik", "roboter", "manipulation",
+    "robot", "robotics", "robotik", "roboter",
     "reinforcement learning", "reinforcement-learning", "sim2real", "lidar", "slam",
-    "kinematics", "actuator", "openvla", "lerobot", "panda-reach", "pandareach",
+    "openvla", "lerobot", "panda-reach", "pandareach",
     "gym-robotics", "pybullet", "mujoco", "isaacgym"
 ]
 
 # Short tokens that require word boundary matching to avoid false positives
 # "rl" matches "world", "real-world"; "ros" matches "across", "micros"
+# Each tuple is (pattern, human-readable label for logs)
 ROBOTICS_KEYWORDS_REGEX = [
-    re.compile(r"\brl\b", re.IGNORECASE),     # standalone "rl" only
-    re.compile(r"\bros2?\b", re.IGNORECASE),  # "ros" or "ros2" as standalone words
-    re.compile(r"\bvla\b", re.IGNORECASE),    # "vla" as standalone word
+    (re.compile(r"\brl\b", re.IGNORECASE), "rl"),        # standalone "rl" only
+    (re.compile(r"\bros2?\b", re.IGNORECASE), "ros"),    # "ros" or "ros2" as standalone words
 ]
 
 # Pipelines that indicate robotics/embodied AI
@@ -95,9 +96,9 @@ def _check_robotics_keywords(text: str) -> str | None:
         if k in text_lower:
             return k
     # Check regex patterns (short tokens with word boundaries)
-    for pattern in ROBOTICS_KEYWORDS_REGEX:
+    for pattern, label in ROBOTICS_KEYWORDS_REGEX:
         if pattern.search(text_lower):
-            return pattern.pattern
+            return label  # Return human-readable label instead of raw pattern
     return None
 
 def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -> bool:
