@@ -80,7 +80,6 @@ def should_block_model_name(
     name_counts[key] = new_count
 
     if key in blocked_names:
-        blocked_names.add(key)
         return (True, new_count)
 
     if threshold <= 0:
