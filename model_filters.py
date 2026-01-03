@@ -109,6 +109,9 @@ def _check_robotics_tag(tag: str) -> str | None:
     Uses EXACT match for substring keywords (not substring-in-tag) and regex for short tokens.
     This prevents tags like "robotics-xyz" from matching keyword "robot".
     """
+    # Guard against non-string/None tags
+    if not isinstance(tag, str):
+        return None
     tag_lower = tag.lower()
     # Check exact match with substring keywords (tags should match exactly)
     if tag_lower in ROBOTICS_KEYWORDS_SUBSTRING:
