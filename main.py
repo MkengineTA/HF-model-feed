@@ -577,21 +577,39 @@ def main():
 
             score = int((llm_result or {}).get("specialist_score", 0) or 0)
             keep_for_report = True
+            skip_reason = None
+            skip_extra = {}
             if config.EXCLUDE_REVIEW_REQUIRED and model_data.get("status") != "processed":
                 keep_for_report = False
+                skip_reason = "skip:report_filtered"
             if score < config.MIN_SPECIALIST_SCORE:
                 keep_for_report = False
+                skip_reason = "skip:report_filtered"
+            # Secondary robotics filter: check LLM-generated content for robotics terms
+            # Only triggers if robotics evidence exists in README/tags/pipeline
+            if keep_for_report:
+                is_robotics, matched_keyword = filters.llm_analysis_contains_robotics(
+                    llm_result,
+                    model_info=model_info,
+                    tags=tags,
+                    readme_text=readme_content,
+                )
+                if is_robotics:
+                    keep_for_report = False
+                    skip_reason = "skip:robotics_in_llm_analysis"
+                    skip_extra["matched"] = matched_keyword
 
             if keep_for_report:
                 processed_models.append(model_data)
                 stats.record_processed(model_id, uploader)
-            else:
+            elif skip_reason:
                 skip(
                     model_id,
                     uploader,
-                    "skip:report_filtered",
+                    skip_reason,
                     score=score,
                     min_score=config.MIN_SPECIALIST_SCORE,
+                    **skip_extra,
                 )
 
         except Exception as e:
