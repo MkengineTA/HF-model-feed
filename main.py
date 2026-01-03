@@ -85,9 +85,13 @@ def should_block_model_name(
     if threshold <= 0:
         return (False, new_count)
 
-    if new_count >= threshold:
+    if new_count > threshold:
         blocked_names.add(key)
-        return (new_count > threshold, new_count)
+        return (True, new_count)
+
+    if new_count == threshold:
+        blocked_names.add(key)
+        return (False, new_count)
 
     return (False, new_count)
 
