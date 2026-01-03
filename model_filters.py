@@ -218,7 +218,9 @@ def llm_analysis_contains_robotics(
     return False, None
 
 def has_quant_in_name(model_id: str) -> bool:
-    return any(p.search(model_id or "") for p in QUANT_NAME_PATTERNS)
+    # Check only the repo name (after the last '/'), not the namespace
+    repo_name = (model_id or "").split("/")[-1]
+    return any(p.search(repo_name) for p in QUANT_NAME_PATTERNS)
 
 def is_export_or_conversion(model_id: str, tags, file_details) -> bool:
     tagset = {t.lower() for t in (tags or [])}
