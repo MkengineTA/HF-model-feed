@@ -269,30 +269,38 @@ class TestFilters(unittest.TestCase):
         self.assertEqual(result["format"], "awq")
 
     def test_classify_export_conversion_evidence_config_files(self):
-        """Test that config files produce strong evidence."""
-        # gptq_config.json -> strong
+        """Test that config files produce suspected evidence (not strong alone)."""
+        # gptq_config.json alone -> suspected (needs corroboration for strong)
         result = filters.classify_export_conversion_evidence(
             "user/model", [], [{"path": "gptq_config.json"}]
         )
-        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["level"], "suspected")
         self.assertEqual(result["format"], "gptq")
         
-        # quantize_config.json -> strong (GPTQ)
-        result = filters.classify_export_conversion_evidence(
-            "user/model", [], [{"path": "quantize_config.json"}]
-        )
-        self.assertEqual(result["level"], "strong")
-        self.assertEqual(result["format"], "gptq")
-        
-        # awq_config.json -> strong
+        # awq_config.json alone -> suspected
         result = filters.classify_export_conversion_evidence(
             "user/model", [], [{"path": "awq_config.json"}]
         )
-        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["level"], "suspected")
         self.assertEqual(result["format"], "awq")
+        
+        # Config + matching name pattern = strong (corroborated)
+        result = filters.classify_export_conversion_evidence(
+            "user/model-gptq", [], [{"path": "gptq_config.json"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gptq")
+        
+        # Config + README confirmation = strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "gptq_config.json"}],
+            readme_text="This model was quantized to GPTQ format."
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gptq")
 
     def test_classify_export_conversion_evidence_name_only_suspected(self):
-        """Test that name-only markers produce suspected evidence (not strong)."""
+        """Test that export format name markers produce suspected evidence (not strong)."""
         # Model name with GPTQ but no tags/files -> suspected
         result = filters.classify_export_conversion_evidence(
             "user/model-gptq", [], []
@@ -302,15 +310,42 @@ class TestFilters(unittest.TestCase):
         
         # Model name with GGUF but no tags/files -> suspected
         result = filters.classify_export_conversion_evidence(
-            "user/model-GGUF-Q4", [], []
+            "user/model-GGUF", [], []
         )
         self.assertEqual(result["level"], "suspected")
+        self.assertEqual(result["format"], "gguf")
         
         # Model name with AWQ but no tags/files -> suspected
         result = filters.classify_export_conversion_evidence(
             "user/model-awq", [], []
         )
         self.assertEqual(result["level"], "suspected")
+    
+    def test_classify_export_conversion_evidence_generic_dtype_no_warning(self):
+        """Test that generic dtype patterns (fp16/bf16/int8) do NOT trigger warnings."""
+        # fp16 alone -> none (not suspected, no warning)
+        result = filters.classify_export_conversion_evidence(
+            "user/model-fp16", [], []
+        )
+        self.assertEqual(result["level"], "none")
+        
+        # bf16 alone -> none
+        result = filters.classify_export_conversion_evidence(
+            "user/model-bf16", [], []
+        )
+        self.assertEqual(result["level"], "none")
+        
+        # int8 alone -> none
+        result = filters.classify_export_conversion_evidence(
+            "user/model-int8", [], []
+        )
+        self.assertEqual(result["level"], "none")
+        
+        # Q4_K_M style patterns -> none
+        result = filters.classify_export_conversion_evidence(
+            "user/model-Q4_K_M", [], []
+        )
+        self.assertEqual(result["level"], "none")
 
     def test_classify_export_conversion_evidence_none(self):
         """Test that models without any evidence return none."""

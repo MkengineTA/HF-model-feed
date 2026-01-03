@@ -42,12 +42,19 @@ VISUAL_PIPELINES = [
     "diffusers", "controlnet"
 ]
 
-QUANT_NAME_PATTERNS = [
-    re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX)($|[-_])", re.IGNORECASE),
+# Export/conversion format name patterns - these are reliable indicators
+# Used for both name detection (suspected) and warnings
+EXPORT_FORMAT_NAME_PATTERNS = [
+    re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX|HQQ)($|[-_])", re.IGNORECASE),
+]
+
+# Generic quantization patterns - common dtype/bitness markers
+# NOT reliable indicators of export/conversion, should not trigger warnings alone
+GENERIC_QUANT_NAME_PATTERNS = [
     re.compile(r"(^|[-_])(Q\d_[K0-9A-Z]+|Q\d)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(int4|int8|fp16|bf16)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(\d+bit)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(hqq|quip|squeeze)($|[-_])", re.IGNORECASE),
+    re.compile(r"(^|[-_])(quip|squeeze)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(I|T)Q\d(_[A-Z0-9]+)*($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])BF16($|[-_])", re.IGNORECASE),
@@ -55,13 +62,16 @@ QUANT_NAME_PATTERNS = [
     re.compile(r"(^|[-_])FP16($|[-_])", re.IGNORECASE),
 ]
 
+# Combined patterns for has_quant_in_name() - used by other filters
+QUANT_NAME_PATTERNS = EXPORT_FORMAT_NAME_PATTERNS + GENERIC_QUANT_NAME_PATTERNS
+
 # =====================================================================
 # Export/Quantization Format Registry (evidence-based detection)
 # =====================================================================
 # Each format has:
-#   - tags: HuggingFace tags that indicate this format
-#   - file_exts: file extensions that prove this format
-#   - config_files: config filenames that indicate this format
+#   - tags: HuggingFace tags that indicate this format (strong evidence)
+#   - file_exts: file extensions that prove this format (strong evidence)
+#   - config_files: config filenames that suggest this format (suspected, needs corroboration)
 #   - readme_keywords: phrases in README that confirm conversion/quantization
 EXPORT_FORMAT_REGISTRY = {
     "onnx": {
@@ -85,13 +95,13 @@ EXPORT_FORMAT_REGISTRY = {
     "gptq": {
         "tags": ["gptq"],
         "file_exts": [],
-        "config_files": ["gptq_config.json", "quantize_config.json"],
+        "config_files": ["gptq_config.json"],  # Only format-specific config
         "readme_keywords": ["quantized to gptq", "gptq quantization", "gptq version"],
     },
     "awq": {
         "tags": ["awq"],
         "file_exts": [],
-        "config_files": ["awq_config.json", "quant_config.json"],
+        "config_files": ["awq_config.json"],  # Only format-specific config
         "readme_keywords": ["quantized to awq", "awq quantization", "awq version"],
     },
     "exl2": {
@@ -122,6 +132,9 @@ def classify_export_conversion_evidence(
       - level: "strong" | "suspected" | "none"
       - format: detected format (e.g., "onnx", "gguf", "gptq") or None
       - evidence: dict with matched_tag, matched_file, matched_config, matched_name, matched_readme_keyword
+    
+    Note: Only export format patterns (onnx/gguf/gptq/awq/exl2/hqq) trigger suspected warnings.
+    Generic dtype markers (fp16/bf16/int8/etc.) do NOT trigger warnings alone.
     """
     result = {
         "level": "none",
@@ -145,7 +158,7 @@ def classify_export_conversion_evidence(
             if p:
                 file_paths.append(p)
     
-    # Check for strong evidence across all formats
+    # Check for strong evidence across all formats (tags and file extensions only)
     for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
         # 1. Tag-based evidence (strong)
         for tag in fmt_info["tags"]:
@@ -163,50 +176,84 @@ def classify_export_conversion_evidence(
                     result["format"] = fmt_name
                     result["evidence"]["matched_file"] = fp
                     return result
-        
-        # 3. Config file evidence (strong)
+    
+    # Check for config files (suspected evidence, needs corroboration for strong)
+    config_match_fmt = None
+    config_match_path = None
+    for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
         for cfg in fmt_info["config_files"]:
             cfg_lower = cfg.lower()
             for fp in file_paths:
-                # Match config file at any path level
                 if fp.endswith(cfg_lower) or fp.split("/")[-1] == cfg_lower:
-                    result["level"] = "strong"
-                    result["format"] = fmt_name
-                    result["evidence"]["matched_config"] = fp
-                    return result
+                    config_match_fmt = fmt_name
+                    config_match_path = fp
+                    break
+            if config_match_fmt:
+                break
+        if config_match_fmt:
+            break
     
-    # Check for name-only markers (suspected)
+    # Check for export format name markers (only these trigger suspected warnings)
     repo_name = (model_id or "").split("/")[-1]
-    matched_format = None
+    name_match_fmt = None
+    name_match_text = None
     
-    for p in QUANT_NAME_PATTERNS:
+    for p in EXPORT_FORMAT_NAME_PATTERNS:
         match = p.search(repo_name)
         if match:
-            # Try to determine which format from the match
             matched_text = match.group(0).strip("-_").lower()
-            # Map matched text to format - use exact match to avoid false positives
             for fmt_name in EXPORT_FORMAT_REGISTRY.keys():
                 if fmt_name == matched_text:
-                    matched_format = fmt_name
+                    name_match_fmt = fmt_name
+                    name_match_text = match.group(0)
                     break
-            if not matched_format:
-                matched_format = "quantized"  # Generic quantization (e.g., Q4_K_M, int8, bf16)
-            
-            result["level"] = "suspected"
-            result["format"] = matched_format
-            result["evidence"]["matched_name"] = match.group(0)
-            
-            # Optional: README keyword confirmation can upgrade suspected to strong
-            # Only check keywords for the matched format to avoid format mismatches
-            if readme_text and matched_format in EXPORT_FORMAT_REGISTRY:
-                readme_lower = readme_text.lower()
-                for kw in EXPORT_FORMAT_REGISTRY[matched_format]["readme_keywords"]:
-                    if kw in readme_lower:
-                        result["level"] = "strong"
-                        result["evidence"]["matched_readme_keyword"] = kw
-                        return result
-            
-            return result
+            break
+    
+    # Determine evidence level based on combinations
+    # Config + name match for same format = strong
+    if config_match_fmt and name_match_fmt and config_match_fmt == name_match_fmt:
+        result["level"] = "strong"
+        result["format"] = config_match_fmt
+        result["evidence"]["matched_config"] = config_match_path
+        result["evidence"]["matched_name"] = name_match_text
+        return result
+    
+    # Config alone = suspected (needs README confirmation to be strong)
+    if config_match_fmt:
+        result["level"] = "suspected"
+        result["format"] = config_match_fmt
+        result["evidence"]["matched_config"] = config_match_path
+        
+        # README can upgrade to strong
+        if readme_text:
+            readme_lower = readme_text.lower()
+            for kw in EXPORT_FORMAT_REGISTRY[config_match_fmt]["readme_keywords"]:
+                if kw in readme_lower:
+                    result["level"] = "strong"
+                    result["evidence"]["matched_readme_keyword"] = kw
+                    return result
+        return result
+    
+    # Export format name match = suspected (needs README confirmation to be strong)
+    if name_match_fmt:
+        result["level"] = "suspected"
+        result["format"] = name_match_fmt
+        result["evidence"]["matched_name"] = name_match_text
+        
+        # README can upgrade to strong
+        if readme_text:
+            readme_lower = readme_text.lower()
+            for kw in EXPORT_FORMAT_REGISTRY[name_match_fmt]["readme_keywords"]:
+                if kw in readme_lower:
+                    result["level"] = "strong"
+                    result["evidence"]["matched_readme_keyword"] = kw
+                    return result
+        return result
+    
+    # Generic quant patterns (fp16, bf16, int8, etc.) - do NOT trigger warnings
+    # These are handled silently - no suspected level, no warnings
+    
+    return result
     
     return result
 

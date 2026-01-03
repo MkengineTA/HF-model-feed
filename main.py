@@ -418,8 +418,12 @@ def main():
                 skip(model_id, uploader, "skip:nsfw_excluded", trace=filter_trace)
                 continue
 
-            if "skip:generative_visual" in filter_trace or "skip:export_conversion" in filter_trace:
-                skip(model_id, uploader, filter_trace[0], trace=filter_trace)
+            if "skip:generative_visual" in filter_trace:
+                skip(model_id, uploader, "skip:generative_visual", trace=filter_trace)
+                continue
+
+            if "skip:export_conversion" in filter_trace:
+                skip(model_id, uploader, "skip:export_conversion", trace=filter_trace)
                 continue
 
             # ---- Phase 1: README ----
