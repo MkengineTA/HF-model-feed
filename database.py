@@ -216,14 +216,15 @@ class Database:
     def remove_dynamic_blacklist(self, namespaces: set[str]) -> set[str]:
         if not namespaces:
             return set()
+        ns_list = sorted({n for n in namespaces if n})
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            f"DELETE FROM dynamic_blacklist WHERE namespace IN ({','.join('?' for _ in namespaces)})",
-            tuple(namespaces),
+            f"DELETE FROM dynamic_blacklist WHERE namespace IN ({','.join('?' for _ in ns_list)})",
+            tuple(ns_list),
         )
         conn.commit()
-        return namespaces
+        return set(ns_list)
 
     def get_author(self, namespace: str):
         conn = self.get_connection()
