@@ -26,16 +26,16 @@ VISUAL_PIPELINES = [
 ]
 
 QUANT_NAME_PATTERNS = [
-    re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(Q\d_[K0-9A-Z]+|Q\d)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(int4|int8|fp16|bf16)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(\d+bit)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(hqq|quip|squeeze)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(I|T)Q\d(_[A-Z0-9]+)*($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])BF16($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])FP8($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])FP16($|[-_])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX)($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(Q\d_[K0-9A-Z]+|Q\d)($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(int4|int8|fp16|bf16)($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(\d+bit)($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(hqq|quip|squeeze)($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])(I|T)Q\d(_[A-Z0-9]+)*($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])BF16($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])FP8($|[-_/])", re.IGNORECASE),
+    re.compile(r"(^|[-_/])FP16($|[-_/])", re.IGNORECASE),
 ]
 
 UNSLOTH_TEMPLATE_MARKERS = [

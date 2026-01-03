@@ -61,6 +61,23 @@ class TestFilters(unittest.TestCase):
     def test_is_export_or_conversion(self):
         self.assertTrue(filters.is_export_or_conversion("model-gguf", ["gguf"], []))
         self.assertFalse(filters.is_export_or_conversion("model-base", [], []))
+        
+        # Test ONNX filtering with forward slash (issue example)
+        self.assertTrue(filters.is_export_or_conversion("ryanli123/onnx", [], []))
+        self.assertTrue(filters.is_export_or_conversion("user/model-onnx", [], []))
+        self.assertTrue(filters.is_export_or_conversion("user/onnx-model", [], []))
+        
+        # Test ONNX with other delimiters
+        self.assertTrue(filters.is_export_or_conversion("model-onnx", [], []))
+        self.assertTrue(filters.is_export_or_conversion("model_onnx", [], []))
+        self.assertTrue(filters.is_export_or_conversion("onnx-model", [], []))
+        
+        # Test ONNX as tag still works
+        self.assertTrue(filters.is_export_or_conversion("some-model", ["onnx"], []))
+        
+        # Test models that should NOT be filtered
+        self.assertFalse(filters.is_export_or_conversion("myonnx", [], []))
+        self.assertFalse(filters.is_export_or_conversion("onnxmodel", [], []))
 
     def test_compute_info_score_accepts_yaml_none(self):
         score = filters.compute_info_score(
