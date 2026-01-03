@@ -160,8 +160,12 @@ class Database:
                         )
                     conn.commit()
                 return namespaces
-            except Exception:
-                logger.warning("Failed to parse dynamic blacklist from metadata; resetting.")
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse dynamic blacklist from metadata; resetting. Error: %s",
+                    e,
+                    exc_info=True,
+                )
         return set()
 
     def get_dynamic_blacklist(self) -> set[str]:
