@@ -85,7 +85,7 @@ class TestFilters(unittest.TestCase):
         self.assertEqual(occurrences, 2)
 
         should_block, occurrences = should_block_model_name("foo", counts, blocked, 3)
-        self.assertTrue(should_block)
+        self.assertFalse(should_block)
         self.assertEqual(occurrences, 3)
 
         should_block, occurrences = should_block_model_name("foo", counts, blocked, 3)

@@ -73,15 +73,25 @@ def should_block_model_name(
     threshold: int,
 ) -> tuple[bool, int]:
     key = (model_name or "").strip().lower()
-    if not key or threshold <= 0:
+    if not key:
         return (False, 0)
 
     new_count = name_counts.get(key, 0) + 1
     name_counts[key] = new_count
 
-    if key in blocked_names or new_count >= threshold:
+    if key in blocked_names:
         blocked_names.add(key)
         return (True, new_count)
+
+    if threshold <= 0:
+        return (False, new_count)
+
+    if new_count > threshold:
+        blocked_names.add(key)
+        return (True, new_count)
+
+    if new_count == threshold:
+        blocked_names.add(key)
 
     return (False, new_count)
 
