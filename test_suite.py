@@ -342,6 +342,15 @@ class TestFilters(unittest.TestCase):
             readme_text="This is a great language model for text generation."
         )
         self.assertEqual(result["level"], "suspected")
+        
+        # Name-only match with DIFFERENT format README should NOT upgrade
+        # (e.g., gptq name but onnx keywords in README stays suspected)
+        result = filters.classify_export_conversion_evidence(
+            "user/model-gptq", [], [],
+            readme_text="This model was converted to ONNX format for deployment."
+        )
+        self.assertEqual(result["level"], "suspected")
+        self.assertEqual(result["format"], "gptq")  # Original format preserved
 
     def test_compute_info_score_accepts_yaml_none(self):
         score = filters.compute_info_score(

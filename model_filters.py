@@ -184,28 +184,27 @@ def classify_export_conversion_evidence(
         if match:
             # Try to determine which format from the match
             matched_text = match.group(0).strip("-_").lower()
-            # Map matched text to format
+            # Map matched text to format - use exact match to avoid false positives
             for fmt_name in EXPORT_FORMAT_REGISTRY.keys():
-                if fmt_name in matched_text:
+                if fmt_name == matched_text:
                     matched_format = fmt_name
                     break
             if not matched_format:
-                matched_format = "quantized"  # Generic quantization
+                matched_format = "quantized"  # Generic quantization (e.g., Q4_K_M, int8, bf16)
             
             result["level"] = "suspected"
             result["format"] = matched_format
             result["evidence"]["matched_name"] = match.group(0)
             
             # Optional: README keyword confirmation can upgrade suspected to strong
-            if readme_text:
+            # Only check keywords for the matched format to avoid format mismatches
+            if readme_text and matched_format in EXPORT_FORMAT_REGISTRY:
                 readme_lower = readme_text.lower()
-                for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
-                    for kw in fmt_info["readme_keywords"]:
-                        if kw in readme_lower:
-                            result["level"] = "strong"
-                            result["format"] = fmt_name
-                            result["evidence"]["matched_readme_keyword"] = kw
-                            return result
+                for kw in EXPORT_FORMAT_REGISTRY[matched_format]["readme_keywords"]:
+                    if kw in readme_lower:
+                        result["level"] = "strong"
+                        result["evidence"]["matched_readme_keyword"] = kw
+                        return result
             
             return result
     
