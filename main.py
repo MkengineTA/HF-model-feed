@@ -65,7 +65,7 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     r2 = r.translate(trans)
     return q2 in r2
 
-
+  
 def tree_has_readme(file_details) -> bool:
     if not isinstance(file_details, list):
         return False
@@ -112,14 +112,43 @@ def apply_dynamic_blacklist(db: Database, stats: RunStats, dry_run: bool) -> Non
 
     existing_dynamic = db.get_dynamic_blacklist()
     new_additions = {ns: cnt for ns, cnt in additions.items() if ns not in existing_dynamic}
+
+    # Persist (table-based) + refresh in-memory policy
     db.upsert_dynamic_blacklist(additions, reason=reason)
 
     combined = existing_dynamic | set(additions.keys())
     namespace_policy.set_dynamic_blacklist(combined)
+
     if new_additions:
         logger.info(
             f"Dynamic blacklist updated with {len(new_additions)} uploader(s): {sorted(new_additions)}"
         )
+
+
+def should_block_model_name(
+    model_name: str,
+    name_counts: dict[str, int],
+    blocked_names: set[str],
+    threshold: int,
+) -> tuple[bool, int]:
+    key = (model_name or "").strip().lower()
+    if not key:
+        return (False, 0)
+
+    new_count = name_counts.get(key, 0) + 1
+    name_counts[key] = new_count
+
+    if key in blocked_names:
+        return (True, new_count)
+
+    if threshold <= 0:
+        return (False, new_count)
+
+    if new_count >= threshold:
+        blocked_names.add(key)
+        return (True, new_count)
+
+    return (False, new_count)
 
 
 def main():
@@ -243,6 +272,8 @@ def main():
     processed_models: list[dict] = []
     author_run_cache: dict[str, tuple[str, object, int]] = {}
     seen_signatures: dict[str, str] = {}
+    model_name_counts: dict[str, int] = {}
+    blocked_model_names: set[str] = set()
 
     def skip(model_id: str, uploader: str | None, reason: str, **extra):
         stats.record_skip(model_id, reason, author=uploader, **extra)
@@ -253,6 +284,7 @@ def main():
 
         namespace = model_id.split("/")[0] if "/" in model_id else None
         uploader = namespace or "unknown"
+        model_name = (model_id.split("/")[-1] or model_id).strip()
 
         # ✅ Fix 2: niemals den ganzen Run durch einen Einzel-Fehler killen
         try:
@@ -340,6 +372,23 @@ def main():
                     author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
             logger.info(f"Author: {uploader} | Kind: {author_kind} | Tier: {trust_tier}")
+
+            if trust_tier <= 1:
+                should_block, occurrences = should_block_model_name(
+                    model_name,
+                    model_name_counts,
+                    blocked_model_names,
+                    config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+                )
+                if should_block:
+                    skip(
+                        model_id,
+                        uploader,
+                        "skip:duplicate_model_name",
+                        occurrences=occurrences,
+                        limit=config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+                    )
+                    continue
 
             filter_trace: list[str] = []
             tags = getattr(model_info, "tags", None) or []

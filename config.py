@@ -48,6 +48,7 @@ EXCLUDED_NAMESPACES = {"thireus"}
 # Reporting Filters
 MIN_SPECIALIST_SCORE = int(os.getenv("MIN_SPECIALIST_SCORE", "0"))
 EXCLUDE_REVIEW_REQUIRED = os.getenv("EXCLUDE_REVIEW_REQUIRED", "True").lower() == "true"
+MODEL_NAME_DUPLICATE_BLOCK_LIMIT = int(os.getenv("MODEL_NAME_DUPLICATE_BLOCK_LIMIT", "3"))
 
 # Evidence usage
 # Keep evidence internally to validate LLM claims, but don't show in report by default.
