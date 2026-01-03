@@ -178,23 +178,25 @@ class TestFilters(unittest.TestCase):
         self.assertIsNotNone(matched)
 
     def test_is_export_or_conversion(self):
+        # Tag-based evidence is strong - should return True
         self.assertTrue(filters.is_export_or_conversion("model-gguf", ["gguf"], []))
+        self.assertTrue(filters.is_export_or_conversion("some-model", ["onnx"], []))
+        self.assertTrue(filters.is_export_or_conversion("some-model", ["gptq"], []))
+        self.assertTrue(filters.is_export_or_conversion("some-model", ["awq"], []))
+        
+        # No evidence - should return False
         self.assertFalse(filters.is_export_or_conversion("model-base", [], []))
         
-        # Test ONNX filtering - checks repo name only, not namespace
-        self.assertTrue(filters.is_export_or_conversion("ryanli123/onnx", [], []))
-        self.assertTrue(filters.is_export_or_conversion("user/model-onnx", [], []))
-        self.assertTrue(filters.is_export_or_conversion("user/onnx-model", [], []))
+        # Name-only markers without file/tag evidence now return False (suspected, not strong)
+        # These are suspected but NOT strong evidence
+        self.assertFalse(filters.is_export_or_conversion("ryanli123/onnx", [], []))
+        self.assertFalse(filters.is_export_or_conversion("user/model-onnx", [], []))
+        self.assertFalse(filters.is_export_or_conversion("user/onnx-model", [], []))
+        self.assertFalse(filters.is_export_or_conversion("model-onnx", [], []))
+        self.assertFalse(filters.is_export_or_conversion("model_onnx", [], []))
+        self.assertFalse(filters.is_export_or_conversion("onnx-model", [], []))
         
-        # Test ONNX with other delimiters
-        self.assertTrue(filters.is_export_or_conversion("model-onnx", [], []))
-        self.assertTrue(filters.is_export_or_conversion("model_onnx", [], []))
-        self.assertTrue(filters.is_export_or_conversion("onnx-model", [], []))
-        
-        # Test ONNX as tag still works
-        self.assertTrue(filters.is_export_or_conversion("some-model", ["onnx"], []))
-        
-        # Test models that should NOT be filtered
+        # Models that should NOT be filtered (no match at all)
         self.assertFalse(filters.is_export_or_conversion("myonnx", [], []))
         self.assertFalse(filters.is_export_or_conversion("onnxmodel", [], []))
         
@@ -202,6 +204,144 @@ class TestFilters(unittest.TestCase):
         self.assertFalse(filters.is_export_or_conversion("onnx-community/model", [], []))
         self.assertFalse(filters.is_export_or_conversion("gguf-user/model", [], []))
         self.assertFalse(filters.is_export_or_conversion("myonnx/normalmodel", [], []))
+
+    def test_classify_export_conversion_evidence_file_extensions(self):
+        """Test that *.onnx, *.gguf, *.ggml files produce strong evidence."""
+        # ONNX file -> strong evidence
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "model.onnx"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "onnx")
+        self.assertEqual(result["evidence"]["matched_file"], "model.onnx")
+        
+        # GGUF file -> strong evidence
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "model-Q4_K_M.gguf"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gguf")
+        self.assertIn(".gguf", result["evidence"]["matched_file"])
+        
+        # GGML file -> strong evidence
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "weights.ggml"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "ggml")
+        
+        # Nested path with ONNX file
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "models/fp16/model.onnx"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "onnx")
+
+    def test_classify_export_conversion_evidence_tags(self):
+        """Test that tag-based evidence is strong."""
+        # GGUF tag -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", ["gguf"], []
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gguf")
+        self.assertEqual(result["evidence"]["matched_tag"], "gguf")
+        
+        # ONNX tag -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", ["onnx", "transformers"], []
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "onnx")
+        
+        # GPTQ tag -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", ["GPTQ"], []  # Case insensitive
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gptq")
+        
+        # AWQ tag -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", ["awq"], []
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "awq")
+
+    def test_classify_export_conversion_evidence_config_files(self):
+        """Test that config files produce strong evidence."""
+        # gptq_config.json -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "gptq_config.json"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gptq")
+        
+        # quantize_config.json -> strong (GPTQ)
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "quantize_config.json"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "gptq")
+        
+        # awq_config.json -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model", [], [{"path": "awq_config.json"}]
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "awq")
+
+    def test_classify_export_conversion_evidence_name_only_suspected(self):
+        """Test that name-only markers produce suspected evidence (not strong)."""
+        # Model name with GPTQ but no tags/files -> suspected
+        result = filters.classify_export_conversion_evidence(
+            "user/model-gptq", [], []
+        )
+        self.assertEqual(result["level"], "suspected")
+        self.assertIsNotNone(result["evidence"]["matched_name"])
+        
+        # Model name with GGUF but no tags/files -> suspected
+        result = filters.classify_export_conversion_evidence(
+            "user/model-GGUF-Q4", [], []
+        )
+        self.assertEqual(result["level"], "suspected")
+        
+        # Model name with AWQ but no tags/files -> suspected
+        result = filters.classify_export_conversion_evidence(
+            "user/model-awq", [], []
+        )
+        self.assertEqual(result["level"], "suspected")
+
+    def test_classify_export_conversion_evidence_none(self):
+        """Test that models without any evidence return none."""
+        result = filters.classify_export_conversion_evidence(
+            "user/normal-model", [], []
+        )
+        self.assertEqual(result["level"], "none")
+        self.assertIsNone(result["format"])
+        
+        result = filters.classify_export_conversion_evidence(
+            "user/normal-model", ["transformers", "pytorch"], [{"path": "model.safetensors"}]
+        )
+        self.assertEqual(result["level"], "none")
+
+    def test_classify_export_conversion_evidence_readme_confirmation(self):
+        """Test that README keywords can upgrade suspected to strong."""
+        # Name-only match with README confirmation -> strong
+        result = filters.classify_export_conversion_evidence(
+            "user/model-onnx", [], [],
+            readme_text="This model was converted to ONNX format for deployment."
+        )
+        self.assertEqual(result["level"], "strong")
+        self.assertEqual(result["format"], "onnx")
+        self.assertIsNotNone(result["evidence"]["matched_readme_keyword"])
+        
+        # Name-only match without README confirmation -> suspected
+        result = filters.classify_export_conversion_evidence(
+            "user/model-gptq", [], [],
+            readme_text="This is a great language model for text generation."
+        )
+        self.assertEqual(result["level"], "suspected")
 
     def test_compute_info_score_accepts_yaml_none(self):
         score = filters.compute_info_score(

@@ -55,6 +55,162 @@ QUANT_NAME_PATTERNS = [
     re.compile(r"(^|[-_])FP16($|[-_])", re.IGNORECASE),
 ]
 
+# =====================================================================
+# Export/Quantization Format Registry (evidence-based detection)
+# =====================================================================
+# Each format has:
+#   - tags: HuggingFace tags that indicate this format
+#   - file_exts: file extensions that prove this format
+#   - config_files: config filenames that indicate this format
+#   - readme_keywords: phrases in README that confirm conversion/quantization
+EXPORT_FORMAT_REGISTRY = {
+    "onnx": {
+        "tags": ["onnx"],
+        "file_exts": [".onnx"],
+        "config_files": [],
+        "readme_keywords": ["converted to onnx", "onnx export", "onnx conversion", "exported to onnx"],
+    },
+    "gguf": {
+        "tags": ["gguf"],
+        "file_exts": [".gguf"],
+        "config_files": [],
+        "readme_keywords": ["gguf build", "gguf conversion", "converted to gguf"],
+    },
+    "ggml": {
+        "tags": ["ggml"],
+        "file_exts": [".ggml"],
+        "config_files": [],
+        "readme_keywords": ["ggml conversion", "converted to ggml"],
+    },
+    "gptq": {
+        "tags": ["gptq"],
+        "file_exts": [],
+        "config_files": ["gptq_config.json", "quantize_config.json"],
+        "readme_keywords": ["quantized to gptq", "gptq quantization", "gptq version"],
+    },
+    "awq": {
+        "tags": ["awq"],
+        "file_exts": [],
+        "config_files": ["awq_config.json", "quant_config.json"],
+        "readme_keywords": ["quantized to awq", "awq quantization", "awq version"],
+    },
+    "exl2": {
+        "tags": ["exl2", "exllama2"],
+        "file_exts": [],
+        "config_files": [],
+        "readme_keywords": ["exl2 quantization", "exllama2", "exllamav2"],
+    },
+    "hqq": {
+        "tags": ["hqq"],
+        "file_exts": [],
+        "config_files": ["hqq_config.json"],
+        "readme_keywords": ["hqq quantization", "quantized with hqq"],
+    },
+}
+
+
+def classify_export_conversion_evidence(
+    model_id: str,
+    tags,
+    file_details,
+    readme_text: str | None = None,
+) -> dict:
+    """
+    Classify export/conversion evidence for a model.
+    
+    Returns a dict with:
+      - level: "strong" | "suspected" | "none"
+      - format: detected format (e.g., "onnx", "gguf", "gptq") or None
+      - evidence: dict with matched_tag, matched_file, matched_config, matched_name, matched_readme_keyword
+    """
+    result = {
+        "level": "none",
+        "format": None,
+        "evidence": {
+            "matched_tag": None,
+            "matched_file": None,
+            "matched_config": None,
+            "matched_name": None,
+            "matched_readme_keyword": None,
+        },
+    }
+    
+    tagset = {t.lower() for t in (tags or [])}
+    
+    # Build file path set from file_details
+    file_paths = []
+    if isinstance(file_details, list):
+        for f in file_details:
+            p = (f.get("path") or "").strip().lower()
+            if p:
+                file_paths.append(p)
+    
+    # Check for strong evidence across all formats
+    for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
+        # 1. Tag-based evidence (strong)
+        for tag in fmt_info["tags"]:
+            if tag.lower() in tagset:
+                result["level"] = "strong"
+                result["format"] = fmt_name
+                result["evidence"]["matched_tag"] = tag
+                return result
+        
+        # 2. File extension evidence (strong)
+        for ext in fmt_info["file_exts"]:
+            for fp in file_paths:
+                if fp.endswith(ext.lower()):
+                    result["level"] = "strong"
+                    result["format"] = fmt_name
+                    result["evidence"]["matched_file"] = fp
+                    return result
+        
+        # 3. Config file evidence (strong)
+        for cfg in fmt_info["config_files"]:
+            cfg_lower = cfg.lower()
+            for fp in file_paths:
+                # Match config file at any path level
+                if fp.endswith(cfg_lower) or fp.split("/")[-1] == cfg_lower:
+                    result["level"] = "strong"
+                    result["format"] = fmt_name
+                    result["evidence"]["matched_config"] = fp
+                    return result
+    
+    # Check for name-only markers (suspected)
+    repo_name = (model_id or "").split("/")[-1]
+    matched_format = None
+    
+    for p in QUANT_NAME_PATTERNS:
+        match = p.search(repo_name)
+        if match:
+            # Try to determine which format from the match
+            matched_text = match.group(0).strip("-_").lower()
+            # Map matched text to format
+            for fmt_name in EXPORT_FORMAT_REGISTRY.keys():
+                if fmt_name in matched_text:
+                    matched_format = fmt_name
+                    break
+            if not matched_format:
+                matched_format = "quantized"  # Generic quantization
+            
+            result["level"] = "suspected"
+            result["format"] = matched_format
+            result["evidence"]["matched_name"] = match.group(0)
+            
+            # Optional: README keyword confirmation can upgrade suspected to strong
+            if readme_text:
+                readme_lower = readme_text.lower()
+                for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
+                    for kw in fmt_info["readme_keywords"]:
+                        if kw in readme_lower:
+                            result["level"] = "strong"
+                            result["format"] = fmt_name
+                            result["evidence"]["matched_readme_keyword"] = kw
+                            return result
+            
+            return result
+    
+    return result
+
 UNSLOTH_TEMPLATE_MARKERS = [
     "this llama model was trained 2x faster with unsloth",
     "trained 2x faster with unsloth",
@@ -222,13 +378,15 @@ def has_quant_in_name(model_id: str) -> bool:
     repo_name = (model_id or "").split("/")[-1]
     return any(p.search(repo_name) for p in QUANT_NAME_PATTERNS)
 
-def is_export_or_conversion(model_id: str, tags, file_details) -> bool:
-    tagset = {t.lower() for t in (tags or [])}
-    if "gguf" in tagset or "onnx" in tagset or "gptq" in tagset or "awq" in tagset:
-        return True
-    if has_quant_in_name(model_id):
-        return True
-    return False
+def is_export_or_conversion(model_id: str, tags, file_details, readme_text: str | None = None) -> bool:
+    """
+    Check if a model is an export/conversion/quantization.
+    
+    Returns True only for strong evidence. Name-only matches return False.
+    Use classify_export_conversion_evidence() for detailed classification.
+    """
+    evidence = classify_export_conversion_evidence(model_id, tags, file_details, readme_text)
+    return evidence["level"] == "strong"
 
 def has_external_links(readme: str) -> bool:
     return bool(readme) and ("http" in readme)
