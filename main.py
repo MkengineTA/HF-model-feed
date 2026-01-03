@@ -65,7 +65,6 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     r2 = r.translate(trans)
     return q2 in r2
 
-  
 def tree_has_readme(file_details) -> bool:
     if not isinstance(file_details, list):
         return False
