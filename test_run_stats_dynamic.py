@@ -1,6 +1,7 @@
 import unittest
 from tempfile import TemporaryDirectory
 import os
+from datetime import datetime, timedelta, timezone
 
 import config
 from database import Database
@@ -55,6 +56,34 @@ class TestRunStatsDynamic(unittest.TestCase):
             self.assertEqual(decision, "deny_blacklist")
 
         namespace_policy.set_dynamic_blacklist(set())
+
+    def test_dynamic_blacklist_prune_and_max_count(self):
+        with TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "models.db")
+            db = Database(db_path)
+
+            now = datetime.now(timezone.utc)
+            # Insert older entry
+            db.upsert_dynamic_blacklist({"old_ns": 3}, reason="skip:no_readme")
+            conn = db.get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE dynamic_blacklist SET last_seen = ? WHERE namespace = ?",
+                ((now - timedelta(days=10)).isoformat(), "old_ns"),
+            )
+            conn.commit()
+
+            # Insert fresh entry, then upsert with higher count to trigger MAX
+            db.upsert_dynamic_blacklist({"fresh_ns": 2}, reason="skip:no_readme")
+            db.upsert_dynamic_blacklist({"fresh_ns": 5}, reason="skip:no_readme")
+
+            removed = db.prune_dynamic_blacklist(now - timedelta(days=7))
+            self.assertIn("old_ns", removed)
+
+            cur.execute("SELECT count FROM dynamic_blacklist WHERE namespace = ?", ("fresh_ns",))
+            row = cur.fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["count"], 5)
 
 
 if __name__ == "__main__":

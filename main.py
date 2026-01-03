@@ -127,6 +127,18 @@ def main():
     parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
     parser.add_argument("--dry-run", action="store_true", help="Do not save to DB")
     parser.add_argument("--force-email", action="store_true", help="Send email even in dry-run mode")
+    parser.add_argument(
+        "--prune-dynamic-blacklist-days",
+        type=int,
+        default=None,
+        help="Prune dynamic blacklist entries whose last_seen is older than N days",
+    )
+    parser.add_argument(
+        "--remove-dynamic-blacklist",
+        type=str,
+        default="",
+        help="Comma-separated namespaces to remove from the dynamic blacklist",
+    )
     args = parser.parse_args()
 
     stats = RunStats()
@@ -138,6 +150,22 @@ def main():
     if dynamic_blacklist:
         namespace_policy.set_dynamic_blacklist(dynamic_blacklist)
     hf_client = HFClient(token=config.HF_TOKEN)
+
+    if args.prune_dynamic_blacklist_days and args.prune_dynamic_blacklist_days > 0:
+        cutoff = current_run_time - timedelta(days=args.prune_dynamic_blacklist_days)
+        removed = db.prune_dynamic_blacklist(cutoff)
+        if removed:
+            logger.info(f"Pruned {len(removed)} dynamic blacklist entries older than {args.prune_dynamic_blacklist_days} days.")
+        remaining = db.get_dynamic_blacklist()
+        namespace_policy.set_dynamic_blacklist(remaining)
+
+    if args.remove_dynamic_blacklist:
+        to_remove = {namespace_policy.normalize_namespace(x) for x in args.remove_dynamic_blacklist.split(",") if x.strip()}
+        if to_remove:
+            db.remove_dynamic_blacklist(to_remove)
+            remaining = db.get_dynamic_blacklist()
+            namespace_policy.set_dynamic_blacklist(remaining)
+            logger.info(f"Removed {len(to_remove)} namespace(s) from dynamic blacklist: {sorted(to_remove)}")
 
     llm_client = LLMClient(
         api_url=config.LLM_API_URL,

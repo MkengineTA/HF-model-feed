@@ -188,13 +188,42 @@ class Database:
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(namespace) DO UPDATE SET
                     reason=excluded.reason,
-                    count=excluded.count,
+                    count=MAX(dynamic_blacklist.count, excluded.count),
                     last_seen=excluded.last_seen,
                     added_at=COALESCE(dynamic_blacklist.added_at, excluded.added_at)
                 """,
                 (ns, now, reason, int(count or 0), now),
             )
         conn.commit()
+
+    def prune_dynamic_blacklist(self, cutoff_dt: datetime) -> set[str]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT namespace FROM dynamic_blacklist WHERE last_seen < ?",
+            (cutoff_dt.isoformat(),),
+        )
+        rows = cursor.fetchall()
+        to_remove = {row["namespace"] for row in rows}
+        if to_remove:
+            cursor.execute(
+                "DELETE FROM dynamic_blacklist WHERE last_seen < ?",
+                (cutoff_dt.isoformat(),),
+            )
+            conn.commit()
+        return to_remove
+
+    def remove_dynamic_blacklist(self, namespaces: set[str]) -> set[str]:
+        if not namespaces:
+            return set()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"DELETE FROM dynamic_blacklist WHERE namespace IN ({','.join('?' for _ in namespaces)})",
+            tuple(namespaces),
+        )
+        conn.commit()
+        return namespaces
 
     def get_author(self, namespace: str):
         conn = self.get_connection()
