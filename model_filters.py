@@ -135,19 +135,21 @@ def compute_info_score(readme: str, yaml_meta: dict | None, tags, links_present:
     score = 0
     if not readme:
         return 0
+
+    # ✅ Guard: yaml_meta kann None oder was anderes sein
+    y = yaml_meta if isinstance(yaml_meta, dict) else {}
+
     txt = readme.lower()
-    if len(txt) > 500:
-        score += 1
-    if len(txt) > 2000:
-        score += 1
-    if yaml_meta and ("license" in yaml_meta):
-        score += 1
-    if (yaml_meta and ("base_model" in yaml_meta)) or ("base_model" in txt):
-        score += 1
-    if (yaml_meta and ("dataset" in yaml_meta)) or ("dataset" in txt):
-        score += 1
-    if links_present:
-        score += 1
+
+    if len(txt) > 500: score += 1
+    if len(txt) > 2000: score += 1
+
+    # ✅ YAML keys sind ohne Doppelpunkt
+    if "license" in y: score += 1
+    if ("base_model" in y) or ("base_model" in txt): score += 1
+    if ("dataset" in y) or ("dataset" in txt): score += 1
+    if links_present: score += 1
+
     return score
 
 def is_unsloth_template_finetune(readme: str, tags=None) -> bool:
