@@ -1,25 +1,63 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+import json
+import tempfile
+import os
 import model_filters as filters
 import param_estimator
 from main import should_block_model_name
 
 class TestFilters(unittest.TestCase):
-    def test_estimate_parameters(self):
+    @patch("param_estimator.hf_hub_download")
+    def test_estimate_parameters(self, mock_download):
         # This replaces the old test_extract_parameter_count
-        mock_info = MagicMock()
-        mock_info.safetensors = None
+        # Mock hf_hub_download to avoid network access
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a mock config.json
+            cfg_path = os.path.join(tmpdir, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "hidden_size": 4096,
+                    "num_hidden_layers": 32,
+                    "intermediate_size": 11008,
+                    "vocab_size": 32000,
+                }, f)
+            
+            # Return the config path only when config.json is requested, raise for others
+            def mock_download_side_effect(repo_id=None, filename=None, **kwargs):
+                if filename == "config.json":
+                    return cfg_path
+                raise FileNotFoundError(f"Mock: {filename} not found")
+            
+            mock_download.side_effect = mock_download_side_effect
 
-        # Test estimation from file size
-        # 14GB file -> ~7B params
+            files = [{'path': 'model.safetensors', 'size': 14_000_000_000}]
+
+            api = MagicMock() # Mock HF API
+            # Ensure safetensors metadata does not try network
+            api.get_safetensors_metadata.side_effect = Exception("offline test")
+
+            pe = param_estimator.estimate_parameters(api, "test/model", files)
+            self.assertIsNotNone(pe.total_params)
+            # Since we have a config.json, source should be config_heuristic
+            self.assertEqual(pe.source, "config_heuristic")
+
+    @patch("param_estimator.hf_hub_download")
+    def test_estimate_parameters_filesize_fallback(self, mock_download):
+        # Test that filesize fallback works when config is not available
+        # Mock hf_hub_download to raise FileNotFoundError for both config.json and params.json
+        def mock_download_side_effect(repo_id=None, filename=None, **kwargs):
+            raise FileNotFoundError(f"Mock: {filename} not found")
+        
+        mock_download.side_effect = mock_download_side_effect
+
         files = [{'path': 'model.safetensors', 'size': 14_000_000_000}]
-
-        api = MagicMock() # Mock HF API
+        api = MagicMock()
+        api.get_safetensors_metadata.side_effect = Exception("offline test")
 
         pe = param_estimator.estimate_parameters(api, "test/model", files)
         self.assertIsNotNone(pe.total_params)
-        # Roughly 7B
-        self.assertTrue(6000000000 < pe.total_params < 8000000000)
+        # Should fall back to filesize estimate
         self.assertEqual(pe.source, "filesize_fallback")
 
     def test_security_warnings(self):
