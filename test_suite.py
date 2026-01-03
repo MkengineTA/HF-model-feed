@@ -140,11 +140,13 @@ class TestFilters(unittest.TestCase):
         self.assertFalse(is_robotics)
         self.assertIsNone(matched)
 
-        # Test with None
+        # Test with None: exercise early-return path when no LLM analysis is available.
+        # Other parameters are intentionally omitted because they are not used in this case.
         is_robotics, matched = filters.llm_analysis_contains_robotics(None)
         self.assertFalse(is_robotics)
 
-        # Test with empty dict
+        # Test with empty dict: same early-return behavior as None/absent analysis.
+        # Again, additional parameters are irrelevant and omitted for clarity.
         is_robotics, matched = filters.llm_analysis_contains_robotics({})
         self.assertFalse(is_robotics)
 
