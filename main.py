@@ -655,16 +655,30 @@ def main():
 
     if processed_models or stats.skipped > 0 or stats.warned > 0:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")
-        md_path = reporter.generate_full_report(stats, processed_models, date_str=date_str)
+        
+        # Export CSV (uses default German language)
         reporter.export_csv(processed_models)
         logger.info(stats.summary_line())
 
         if not args.dry_run or args.force_email:
             try:
-                md_content = md_path.read_text(encoding="utf-8")
-                mailer.send_report(md_content, date_str)
+                # Use multi-recipient digest dispatch
+                from digest import dispatch_digests
+                
+                emails_sent = dispatch_digests(
+                    db=db,
+                    stats=stats,
+                    reporter=reporter,
+                    mailer=mailer,
+                    date_str=date_str,
+                    processed_models_current_run=processed_models,
+                    force_send=args.force_email,
+                )
+                
+                if emails_sent == 0:
+                    logger.info("No emails were sent (no subscribers scheduled or configured).")
             except Exception as e:
-                logger.error(f"Email failed: {e}")
+                logger.error(f"Digest dispatch failed: {e}")
     else:
         logger.info("No candidates processed.")
         logger.info(stats.summary_line())

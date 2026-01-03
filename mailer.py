@@ -3,11 +3,19 @@ import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+from typing import List, Optional
 import logging
 import markdown2
 import config
 
 logger = logging.getLogger("EdgeAIScout")
+
+# Localized email subject
+EMAIL_SUBJECTS = {
+    "de": "Edge AI Scout Report - {date}",
+    "en": "Edge AI Scout Report - {date}",
+}
+
 
 class Mailer:
     def __init__(self):
@@ -133,19 +141,46 @@ class Mailer:
         """
         return html_content
 
-    def send_report(self, markdown_content, date_str):
-        if not self.user or not self.password or not self.receiver:
-            logger.warning("Email configuration missing. Skipping email dispatch.")
+    def send_report(
+        self,
+        markdown_content: str,
+        date_str: str,
+        recipients: Optional[List[str]] = None,
+        language: str = "de",
+    ) -> None:
+        """
+        Send report to one or more recipients.
+        
+        Args:
+            markdown_content: Markdown content of the report
+            date_str: Date string for the report
+            recipients: List of email addresses. If None, uses legacy self.receiver
+            language: Language code for localized subject (default: "de")
+        """
+        # Determine recipients
+        if recipients:
+            to_list = recipients
+        elif self.receiver:
+            to_list = [self.receiver]
+        else:
+            to_list = []
+        
+        if not self.user or not self.password or not to_list:
+            logger.warning("Email configuration missing or no recipients. Skipping email dispatch.")
             return
 
         try:
-            logger.info("Preparing email report...")
+            logger.info(f"Preparing email report for {len(to_list)} recipient(s)...")
             html_content = self.convert_markdown_to_html(markdown_content)
 
+            # Get localized subject
+            subject_template = EMAIL_SUBJECTS.get(language, EMAIL_SUBJECTS["en"])
+            subject = subject_template.format(date=date_str)
+
             message = MIMEMultipart("alternative")
-            message["Subject"] = f"Edge AI Scout Report - {date_str}"
+            message["Subject"] = subject
             message["From"] = self.user
-            message["To"] = self.receiver
+            message["To"] = ", ".join(to_list)
 
             message.attach(MIMEText(html_content, "html"))
 
@@ -154,9 +189,9 @@ class Mailer:
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls(context=context)
                 server.login(self.user, self.password)
-                server.sendmail(self.user, self.receiver, message.as_string())
+                server.sendmail(self.user, to_list, message.as_string())
 
-            logger.info(f"Email sent successfully to {self.receiver}")
+            logger.info(f"Email sent successfully to {', '.join(to_list)}")
 
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
