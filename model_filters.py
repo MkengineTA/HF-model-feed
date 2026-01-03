@@ -6,14 +6,21 @@ import hashlib
 from typing import Optional, Any
 from urllib.parse import urlparse
 
-# Keywords - Only robotics-specific terms that are unlikely to appear in non-robotics contexts
-# Note: Both "reinforcement learning" (space) and "reinforcement-learning" (hyphen) are needed
-# because tags and README text may contain either form, and tag matching is exact (not substring)
-ROBOTICS_KEYWORDS = [
-    "robot", "robotics", "robotik", "roboter", "manipulation", "rl", "reinforcement learning",
-    "reinforcement-learning", "sim2real", "lidar", "slam", "ros", "ros2",
-    "kinematics", "actuator", "vla", "openvla", "lerobot", "panda-reach", "pandareach",
+# Robotics-specific terms for substring matching (safe for use with `in`)
+# Only long, unambiguous terms that won't match common words
+ROBOTICS_KEYWORDS_SUBSTRING = [
+    "robot", "robotics", "robotik", "roboter", "manipulation",
+    "reinforcement learning", "reinforcement-learning", "sim2real", "lidar", "slam",
+    "kinematics", "actuator", "openvla", "lerobot", "panda-reach", "pandareach",
     "gym-robotics", "pybullet", "mujoco", "isaacgym"
+]
+
+# Short tokens that require word boundary matching to avoid false positives
+# "rl" matches "world", "real-world"; "ros" matches "across", "micros"
+ROBOTICS_KEYWORDS_REGEX = [
+    re.compile(r"\brl\b", re.IGNORECASE),     # standalone "rl" only
+    re.compile(r"\bros2?\b", re.IGNORECASE),  # "ros" or "ros2" as standalone words
+    re.compile(r"\bvla\b", re.IGNORECASE),    # "vla" as standalone word
 ]
 
 # Pipelines that indicate robotics/embodied AI
@@ -76,6 +83,23 @@ def is_excluded_content(model_id: str, tags) -> bool:
         return True
     return False
 
+def _check_robotics_keywords(text: str) -> str | None:
+    """Check if text contains robotics keywords.
+    
+    Returns the matched keyword/pattern if found, None otherwise.
+    Uses substring matching for long terms and regex with word boundaries for short tokens.
+    """
+    text_lower = text.lower()
+    # Check substring keywords (safe, long terms)
+    for k in ROBOTICS_KEYWORDS_SUBSTRING:
+        if k in text_lower:
+            return k
+    # Check regex patterns (short tokens with word boundaries)
+    for pattern in ROBOTICS_KEYWORDS_REGEX:
+        if pattern.search(text_lower):
+            return pattern.pattern
+    return None
+
 def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -> bool:
     pipeline = get_pipeline_tag(model_info)
     if pipeline in ["visual-question-answering", "image-text-to-text"]:
@@ -84,18 +108,32 @@ def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -
     if pipeline in ROBOTICS_PIPELINES:
         return True
     tagset = {t.lower() for t in (tags or [])}
-    if any(k in tagset for k in ROBOTICS_KEYWORDS):
+    # For tags, check exact match with substring keywords (tags are typically short)
+    if any(k in tagset for k in ROBOTICS_KEYWORDS_SUBSTRING):
         return True
-    text = (readme_text or "").lower()
-    if any(k in text for k in ROBOTICS_KEYWORDS):
-        return True
+    # For tags, also check if tag matches regex patterns
+    for tag in tagset:
+        if _check_robotics_keywords(tag):
+            return True
+    # For README text, use the comprehensive check
+    if readme_text:
+        if _check_robotics_keywords(readme_text):
+            return True
     return False
 
-def llm_analysis_contains_robotics(llm_analysis: dict | None) -> bool:
+def llm_analysis_contains_robotics(
+    llm_analysis: dict | None,
+    model_info=None,
+    tags=None,
+    readme_text: str | None = None,
+) -> tuple[bool, str | None]:
     """Check if LLM-generated content contains robotics-related terms.
     
     This is a secondary filter to catch robotics models that may have escaped
     the initial README-based filter but whose LLM analysis reveals robotics content.
+    
+    IMPORTANT: This filter only triggers if robotics evidence is also found in
+    the README/tags/pipeline to avoid skipping models based solely on LLM hallucinations.
     
     Args:
         llm_analysis: Dictionary containing LLM analysis results with optional keys:
@@ -103,12 +141,16 @@ def llm_analysis_contains_robotics(llm_analysis: dict | None) -> bool:
             - key_facts (list[str]): List of key facts about the model
             - delta (dict): Contains 'what_changed' and 'why_it_matters' lists
             - manufacturing (dict): Contains 'use_cases' list
+        model_info: HuggingFace model info object (for pipeline tag check)
+        tags: List of model tags
+        readme_text: Model README text
     
     Returns:
-        True if any robotics keywords are found in the analysis content.
+        Tuple of (is_robotics: bool, matched_keyword: str | None)
+        matched_keyword is provided for debuggability.
     """
     if not llm_analysis:
-        return False
+        return False, None
     
     # Collect all text from the LLM analysis
     text_parts = []
@@ -122,12 +164,40 @@ def llm_analysis_contains_robotics(llm_analysis: dict | None) -> bool:
     manu = llm_analysis.get("manufacturing") or {}
     text_parts.extend(manu.get("use_cases") or [])
     
-    combined_text = " ".join(str(p) for p in text_parts).lower()
+    combined_text = " ".join(str(p) for p in text_parts)
     
-    # Check for robotics keywords in the combined text
-    if any(k in combined_text for k in ROBOTICS_KEYWORDS):
-        return True
-    return False
+    # Check for robotics keywords in the combined LLM text
+    matched = _check_robotics_keywords(combined_text)
+    if not matched:
+        return False, None
+    
+    # Gate: only trigger if robotics is also supported by README/tags/pipeline
+    # This prevents skipping models based solely on LLM hallucinations
+    has_evidence = False
+    
+    # Check pipeline tag
+    if model_info:
+        pipeline = get_pipeline_tag(model_info)
+        if pipeline in ROBOTICS_PIPELINES:
+            has_evidence = True
+    
+    # Check tags
+    if not has_evidence and tags:
+        tagset = {t.lower() for t in tags}
+        for tag in tagset:
+            if _check_robotics_keywords(tag):
+                has_evidence = True
+                break
+    
+    # Check README text
+    if not has_evidence and readme_text:
+        if _check_robotics_keywords(readme_text):
+            has_evidence = True
+    
+    if has_evidence:
+        return True, matched
+    
+    return False, None
 
 def has_quant_in_name(model_id: str) -> bool:
     return any(p.search(model_id or "") for p in QUANT_NAME_PATTERNS)
