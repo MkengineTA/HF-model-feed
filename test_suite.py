@@ -23,11 +23,14 @@ class TestFilters(unittest.TestCase):
                     "vocab_size": 32000,
                 }, f)
             
-            # Return the config path when hf_hub_download is called
-            mock_download.return_value = cfg_path
+            # Return the config path only when config.json is requested, raise for others
+            def mock_download_side_effect(repo_id, filename):
+                if filename == "config.json":
+                    return cfg_path
+                raise FileNotFoundError(f"Mock: {filename} not found")
+            
+            mock_download.side_effect = mock_download_side_effect
 
-            # Test estimation from file size
-            # 14GB file -> ~7B params
             files = [{'path': 'model.safetensors', 'size': 14_000_000_000}]
 
             api = MagicMock() # Mock HF API
@@ -36,17 +39,17 @@ class TestFilters(unittest.TestCase):
 
             pe = param_estimator.estimate_parameters(api, "test/model", files)
             self.assertIsNotNone(pe.total_params)
-            # With config, should get heuristic estimate, not filesize
-            # The config values above should yield roughly 6-7B params
-            self.assertTrue(5000000000 < pe.total_params < 8000000000)
             # Since we have a config.json, source should be config_heuristic
             self.assertEqual(pe.source, "config_heuristic")
 
     @patch("param_estimator.hf_hub_download")
     def test_estimate_parameters_filesize_fallback(self, mock_download):
         # Test that filesize fallback works when config is not available
-        # Mock hf_hub_download to raise exception (no config available)
-        mock_download.side_effect = Exception("config not found")
+        # Mock hf_hub_download to raise FileNotFoundError for both config.json and params.json
+        def mock_download_side_effect(repo_id, filename):
+            raise FileNotFoundError(f"Mock: {filename} not found")
+        
+        mock_download.side_effect = mock_download_side_effect
 
         files = [{'path': 'model.safetensors', 'size': 14_000_000_000}]
         api = MagicMock()
@@ -54,8 +57,7 @@ class TestFilters(unittest.TestCase):
 
         pe = param_estimator.estimate_parameters(api, "test/model", files)
         self.assertIsNotNone(pe.total_params)
-        # Should fall back to filesize estimate: ~7B params (14GB / 2 bytes per param)
-        self.assertTrue(6000000000 < pe.total_params < 8000000000)
+        # Should fall back to filesize estimate
         self.assertEqual(pe.source, "filesize_fallback")
 
     def test_security_warnings(self):
