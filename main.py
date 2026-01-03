@@ -66,6 +66,26 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     return q2 in r2
 
 
+def should_block_model_name(
+    model_name: str,
+    name_counts: dict[str, int],
+    blocked_names: set[str],
+    threshold: int,
+) -> tuple[bool, int]:
+    key = (model_name or "").strip().lower()
+    if not key or threshold <= 0:
+        return (False, 0)
+
+    new_count = name_counts.get(key, 0) + 1
+    name_counts[key] = new_count
+
+    if key in blocked_names or new_count >= threshold:
+        blocked_names.add(key)
+        return (True, new_count)
+
+    return (False, new_count)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
     parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
@@ -156,6 +176,8 @@ def main():
     processed_models: list[dict] = []
     author_run_cache: dict[str, tuple[str, object, int]] = {}
     seen_signatures: dict[str, str] = {}
+    model_name_counts: dict[str, int] = {}
+    blocked_model_names: set[str] = set()
 
     def skip(model_id: str, uploader: str | None, reason: str, **extra):
         stats.record_skip(model_id, reason, author=uploader, **extra)
@@ -166,6 +188,23 @@ def main():
 
         namespace = model_id.split("/")[0] if "/" in model_id else None
         uploader = namespace or "unknown"
+        model_name = model_id.split("/")[-1]
+
+        should_block, occurrences = should_block_model_name(
+            model_name,
+            model_name_counts,
+            blocked_model_names,
+            config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+        )
+        if should_block:
+            skip(
+                model_id,
+                uploader,
+                "skip:duplicate_model_name",
+                occurrences=occurrences,
+                limit=config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+            )
+            continue
 
         # ✅ Fix 2: niemals den ganzen Run durch einen Einzel-Fehler killen
         try:

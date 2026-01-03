@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 import model_filters as filters
 import param_estimator
+from main import should_block_model_name
 
 class TestFilters(unittest.TestCase):
     def test_estimate_parameters(self):
@@ -70,6 +71,26 @@ class TestFilters(unittest.TestCase):
             links_present=False,
         )
         self.assertIsInstance(score, int)
+
+    def test_should_block_model_name(self):
+        counts = {}
+        blocked = set()
+
+        should_block, occurrences = should_block_model_name("foo", counts, blocked, 3)
+        self.assertFalse(should_block)
+        self.assertEqual(occurrences, 1)
+
+        should_block, occurrences = should_block_model_name("FOO", counts, blocked, 3)
+        self.assertFalse(should_block)
+        self.assertEqual(occurrences, 2)
+
+        should_block, occurrences = should_block_model_name("foo", counts, blocked, 3)
+        self.assertTrue(should_block)
+        self.assertEqual(occurrences, 3)
+
+        should_block, occurrences = should_block_model_name("foo", counts, blocked, 3)
+        self.assertTrue(should_block)
+        self.assertEqual(occurrences, 4)
 
 
 if __name__ == '__main__':

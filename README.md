@@ -83,6 +83,7 @@ The core analysis engine uses an LLM (Local or Cloud) acting as a "Strict Analys
 | `SMTP_USER` | Gmail address for sending reports. |
 | `SMTP_PASS` | Gmail App Password (not your login password). |
 | `RECEIVER_MAIL` | Destination email address. |
+| `MODEL_NAME_DUPLICATE_BLOCK_LIMIT` | Block further processing of a model name after this many occurrences in a single run (default: `3`). |
 
 ---
 
