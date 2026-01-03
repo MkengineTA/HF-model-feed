@@ -40,7 +40,13 @@ def set_dynamic_blacklist(namespaces: set[str] | list[str] | None) -> None:
 
 
 def get_dynamic_blacklist() -> set[str]:
-    return set(DYNAMIC_BLACKLIST)
+    with _BLACKLIST_LOCK:
+        return set(DYNAMIC_BLACKLIST)
+
+
+def get_blacklist() -> set[str]:
+    with _BLACKLIST_LOCK:
+        return set(BLACKLIST)
 
 
 def get_whitelist() -> set[str]:

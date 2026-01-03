@@ -52,6 +52,9 @@ class TestRunStatsDynamic(unittest.TestCase):
             self.assertEqual(row["count"], threshold)
             self.assertEqual(row["reason"], "skip:no_readme")
 
+            cur.execute("SELECT namespace FROM dynamic_blacklist WHERE namespace = ?", ("flaky_author",))
+            self.assertIsNone(cur.fetchone())
+
             decision, _ = namespace_policy.classify_namespace("amax0416")
             self.assertEqual(decision, "deny_blacklist")
 

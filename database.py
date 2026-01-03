@@ -221,6 +221,8 @@ class Database:
         if not namespaces:
             return set()
         ns_list = sorted({n for n in namespaces if n})
+        if not ns_list:
+            return set()
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(

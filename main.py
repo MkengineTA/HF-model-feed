@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import yaml
 import dateutil.parser
 import unicodedata
@@ -86,25 +86,18 @@ def apply_dynamic_blacklist(db: Database, stats: RunStats, dry_run: bool) -> Non
 
     reason = "skip:no_readme"
     threshold = config.DYNAMIC_BLACKLIST_NO_README_MIN
-
+    prolific = stats.prolific_skipped_uploaders(reason, threshold)
     whitelist_snapshot = namespace_policy.get_whitelist()
     base_blacklist_snapshot = namespace_policy.get_base_blacklist()
 
     additions: dict[str, int] = {}
-    for uploader, counter in stats.skip_reasons_by_uploader.items():
-        count = counter.get(reason, 0)
-        if count < threshold:
-            continue
-        top_count = max(counter.values()) if counter else 0
-        if count != top_count:
-            continue
-
+    for uploader in prolific:
         normalized = namespace_policy.normalize_namespace(uploader)
         if not normalized:
             continue
         if normalized in whitelist_snapshot or normalized in base_blacklist_snapshot:
             continue
-        additions[normalized] = count
+        additions[normalized] = stats.skip_reasons_by_uploader[uploader][reason]
 
     if not additions:
         return
