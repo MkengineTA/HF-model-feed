@@ -85,12 +85,9 @@ def should_block_model_name(
     if threshold <= 0:
         return (False, new_count)
 
-    if new_count > threshold:
+    if new_count >= threshold:
         blocked_names.add(key)
-        return (True, new_count)
-
-    if new_count == threshold:
-        blocked_names.add(key)
+        return (new_count > threshold, new_count)
 
     return (False, new_count)
 
@@ -197,7 +194,7 @@ def main():
 
         namespace = model_id.split("/")[0] if "/" in model_id else None
         uploader = namespace or "unknown"
-        model_name = model_id.split("/")[-1]
+        model_name = (model_id.split("/")[-1] or model_id).strip()
 
         should_block, occurrences = should_block_model_name(
             model_name,
