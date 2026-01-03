@@ -196,22 +196,6 @@ def main():
         uploader = namespace or "unknown"
         model_name = (model_id.split("/")[-1] or model_id).strip()
 
-        should_block, occurrences = should_block_model_name(
-            model_name,
-            model_name_counts,
-            blocked_model_names,
-            config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
-        )
-        if should_block:
-            skip(
-                model_id,
-                uploader,
-                "skip:duplicate_model_name",
-                occurrences=occurrences,
-                limit=config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
-            )
-            continue
-
         # ✅ Fix 2: niemals den ganzen Run durch einen Einzel-Fehler killen
         try:
             decision, ns_reason = classify_namespace(uploader)
@@ -298,6 +282,23 @@ def main():
                     author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
             logger.info(f"Author: {uploader} | Kind: {author_kind} | Tier: {trust_tier}")
+
+            if trust_tier <= 1:
+                should_block, occurrences = should_block_model_name(
+                    model_name,
+                    model_name_counts,
+                    blocked_model_names,
+                    config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+                )
+                if should_block:
+                    skip(
+                        model_id,
+                        uploader,
+                        "skip:duplicate_model_name",
+                        occurrences=occurrences,
+                        limit=config.MODEL_NAME_DUPLICATE_BLOCK_LIMIT,
+                    )
+                    continue
 
             filter_trace: list[str] = []
             tags = getattr(model_info, "tags", None) or []
