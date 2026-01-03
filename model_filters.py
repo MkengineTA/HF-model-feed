@@ -102,6 +102,23 @@ def _check_robotics_keywords(text: str) -> str | None:
             return label  # Return human-readable label instead of raw pattern
     return None
 
+def _check_robotics_tag(tag: str) -> str | None:
+    """Check if a single tag matches robotics keywords.
+    
+    Returns the matched keyword/pattern if found, None otherwise.
+    Uses EXACT match for substring keywords (not substring-in-tag) and regex for short tokens.
+    This prevents tags like "robotics-xyz" from matching keyword "robot".
+    """
+    tag_lower = tag.lower()
+    # Check exact match with substring keywords (tags should match exactly)
+    if tag_lower in ROBOTICS_KEYWORDS_SUBSTRING:
+        return tag_lower
+    # Check regex patterns (short tokens with word boundaries)
+    for pattern, label in ROBOTICS_KEYWORDS_REGEX:
+        if pattern.search(tag_lower):
+            return label
+    return None
+
 def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -> bool:
     pipeline = get_pipeline_tag(model_info)
     if pipeline in ["visual-question-answering", "image-text-to-text"]:
@@ -109,15 +126,11 @@ def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -
     # Check pipeline tag for robotics pipelines
     if pipeline in ROBOTICS_PIPELINES:
         return True
-    tagset = {t.lower() for t in (tags or [])}
-    # For tags, check exact match with substring keywords (tags are typically short)
-    if any(k in tagset for k in ROBOTICS_KEYWORDS_SUBSTRING):
-        return True
-    # For tags, also check if tag matches regex patterns
-    for tag in tagset:
-        if _check_robotics_keywords(tag):
+    # For tags, use exact match helper (single pass, no redundancy)
+    for tag in (tags or []):
+        if _check_robotics_tag(tag):
             return True
-    # For README text, use the comprehensive check
+    # For README text, use the comprehensive substring/regex check
     if readme_text:
         if _check_robotics_keywords(readme_text):
             return True
