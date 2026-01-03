@@ -24,7 +24,7 @@ class TestFilters(unittest.TestCase):
                 }, f)
             
             # Return the config path only when config.json is requested, raise for others
-            def mock_download_side_effect(repo_id, filename):
+            def mock_download_side_effect(repo_id=None, filename=None, **kwargs):
                 if filename == "config.json":
                     return cfg_path
                 raise FileNotFoundError(f"Mock: {filename} not found")
@@ -46,7 +46,7 @@ class TestFilters(unittest.TestCase):
     def test_estimate_parameters_filesize_fallback(self, mock_download):
         # Test that filesize fallback works when config is not available
         # Mock hf_hub_download to raise FileNotFoundError for both config.json and params.json
-        def mock_download_side_effect(repo_id, filename):
+        def mock_download_side_effect(repo_id=None, filename=None, **kwargs):
             raise FileNotFoundError(f"Mock: {filename} not found")
         
         mock_download.side_effect = mock_download_side_effect
