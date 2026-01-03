@@ -30,13 +30,12 @@ class Reporter:
 
         if val < 1:
             rounded_b = round(val, 2)
-            millions = round(rounded_b * 1000)
+            millions = int(rounded_b * 1000)
             return f"{int(millions)}M"
 
         if val < 2:
             rounded = round(val, 1)
-            rounded_str = f"{rounded:.1f}".rstrip("0").rstrip(".")
-            return f"{rounded_str}B"
+            return f"{rounded:.1f}B"
 
         return f"{int(round(val))}B"
 
