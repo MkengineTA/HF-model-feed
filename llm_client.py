@@ -77,39 +77,79 @@ def _split_dash_block(s: str) -> list[str]:
 
     return [t]
 
+def _normalize_bilingual_field(value: Any, fallback_lang: str = "de") -> dict[str, Any]:
+    """
+    Normalize a field that may be bilingual (dict with de/en) or monolingual.
+    
+    If the value is already a dict with language keys, return it.
+    If it's a string/list (legacy format), put it under the fallback_lang key.
+    """
+    if isinstance(value, dict) and ("de" in value or "en" in value):
+        return value
+    # Legacy format - assume fallback language
+    return {fallback_lang: value}
+
+
+def _normalize_bilingual_list(value: Any, fallback_lang: str = "de") -> dict[str, list[str]]:
+    """Normalize a list field that may be bilingual."""
+    if isinstance(value, dict) and ("de" in value or "en" in value):
+        result = {}
+        for lang in ["de", "en"]:
+            raw = value.get(lang, [])
+            normalized = []
+            for item in _coerce_list(raw):
+                normalized.extend(_split_dash_block(item))
+            result[lang] = normalized
+        return result
+    # Legacy format
+    normalized = []
+    for item in _coerce_list(value):
+        normalized.extend(_split_dash_block(item))
+    return {fallback_lang: normalized}
+
+
 def normalize_llm_output(analysis: dict) -> dict:
     """
     Postprocess the LLM JSON so reporter gets clean lists.
+    
+    Supports both legacy (monolingual German) format and new bilingual format.
+    For bilingual fields, the structure is: {"de": ..., "en": ...}
     """
     if not isinstance(analysis, dict):
         return analysis
 
-    # key_facts must be list[str] (max 3)
-    kf = []
-    for item in _coerce_list(analysis.get("key_facts")):
-        kf.extend(_split_dash_block(item))
-    analysis["key_facts"] = [x[:140] for x in kf if x][:3]
+    # newsletter_blurb: can be string or {"de": "...", "en": "..."}
+    blurb = analysis.get("newsletter_blurb")
+    analysis["newsletter_blurb"] = _normalize_bilingual_field(blurb, "de")
 
-    # delta lists
+    # key_facts: can be list or {"de": [...], "en": [...]}
+    kf_raw = analysis.get("key_facts")
+    kf_bilingual = _normalize_bilingual_list(kf_raw, "de")
+    # Apply truncation to each language
+    for lang in kf_bilingual:
+        kf_bilingual[lang] = [x[:140] for x in kf_bilingual[lang] if x][:3]
+    analysis["key_facts"] = kf_bilingual
+
+    # delta: can be legacy or bilingual per-field
     delta = analysis.get("delta") or {}
-    wc = []
-    for item in _coerce_list(delta.get("what_changed")):
-        wc.extend(_split_dash_block(item))
-    wm = []
-    for item in _coerce_list(delta.get("why_it_matters")):
-        wm.extend(_split_dash_block(item))
+    wc_bilingual = _normalize_bilingual_list(delta.get("what_changed"), "de")
+    wm_bilingual = _normalize_bilingual_list(delta.get("why_it_matters"), "de")
+    # Apply limits
+    for lang in wc_bilingual:
+        wc_bilingual[lang] = [x for x in wc_bilingual[lang] if x][:3]
+    for lang in wm_bilingual:
+        wm_bilingual[lang] = [x for x in wm_bilingual[lang] if x][:3]
     analysis["delta"] = {
-        "what_changed": [x for x in wc if x][:3],
-        "why_it_matters": [x for x in wm if x][:3],
+        "what_changed": wc_bilingual,
+        "why_it_matters": wm_bilingual,
     }
 
-    # manufacturing.use_cases
+    # manufacturing.use_cases: can be list or bilingual
     manu = analysis.get("manufacturing") or {}
-    uc = []
-    for item in _coerce_list(manu.get("use_cases")):
-        uc.extend(_split_dash_block(item))
-    manu["use_cases"] = [x for x in uc if x][:6]
-    # risks removed
+    uc_bilingual = _normalize_bilingual_list(manu.get("use_cases"), "de")
+    for lang in uc_bilingual:
+        uc_bilingual[lang] = [x for x in uc_bilingual[lang] if x][:6]
+    manu["use_cases"] = uc_bilingual
     manu.pop("risks", None)
     analysis["manufacturing"] = manu
 
@@ -144,10 +184,10 @@ class LLMClient:
             files_ctx = ", ".join([f"{k}: {v}" for k, v in exts.items()])
 
         system_prompt = (
-            "Du bist ein strenger Analyst für Edge-AI- und Manufacturing-Modelle. "
-            "Du darfst NICHTS erfinden. Wenn Informationen nicht klar belegt sind (README/YAML), "
-            "setze sie auf null und liste sie unter unknowns. Confidence sinkt bei fehlenden Belegen. "
-            "Gib AUSSCHLIESSLICH valides JSON aus."
+            "You are a strict analyst for Edge-AI and Manufacturing models. "
+            "You MUST NOT invent anything. If information is not clearly documented (README/YAML), "
+            "set it to null and list it under unknowns. Confidence decreases with missing evidence. "
+            "Output ONLY valid JSON. Provide content in BOTH German (de) and English (en) for text fields."
         )
 
         evidence_block = ""
@@ -155,49 +195,50 @@ class LLMClient:
         if config.LLM_REQUIRE_EVIDENCE:
             evidence_block = """
           "evidence": [
-            { "claim": "Kurzer Claim", "quote": "Exaktes Zitat aus dem README" }
+            { "claim": "Short claim", "quote": "Exact quote from README" }
           ],
             """
             evidence_rules = """
-        - Evidence-Pflicht: Für Claims bzgl. Domain/Performance MUSS ein Zitat ("quote") existieren.
-        - evidence: genau 2-4 Einträge.
+        - Evidence requirement: For claims about domain/performance, a quote MUST exist.
+        - evidence: exactly 2-4 entries.
             """
 
         user_prompt = f"""
-        Analysiere das HuggingFace-Modell.
+        Analyze the HuggingFace model.
 
-        METADATEN:
+        METADATA:
         - Tags: {', '.join(tags) if tags else 'None'}
         - YAML Headers: {json.dumps(yaml_meta, indent=2) if yaml_meta else 'None'}
         - Files Summary: {files_ctx}
 
-        README (gekürzt):
+        README (truncated):
         {readme_content[:32000]}
 
-        LÄNGENLIMITS (hart):
-        - newsletter_blurb: Prägnante Zusammenfassung (ca. 80-100 Wörter) auf Deutsch.
-        - key_facts: 3 Einträge, max 140 Zeichen.
-        - delta.what_changed / why_it_matters: je 3 Bullets.
-        {("- evidence: 2-4 Einträge." if config.LLM_REQUIRE_EVIDENCE else "")}
+        LENGTH LIMITS (strict):
+        - newsletter_blurb: Concise summary (approx. 80-100 words) in BOTH languages.
+        - key_facts: 3 entries, max 140 characters each, in BOTH languages.
+        - delta.what_changed / why_it_matters: 3 bullets each, in BOTH languages.
+        - manufacturing.use_cases: in BOTH languages.
+        {("- evidence: 2-4 entries." if config.LLM_REQUIRE_EVIDENCE else "")}
 
-        REGELN:
-        - Sprache: DEUTSCH (außer Enum-Werte).
-        - params_m / min_vram_gb: Nur wenn explizit genannt.
-        - quantization: Prüfe auch Filenamen (gguf/onnx) falls im Text nicht genannt.
+        RULES:
+        - Provide text content in BOTH German ("de") and English ("en").
+        - params_m / min_vram_gb: Only if explicitly stated.
+        - quantization: Also check filenames (gguf/onnx) if not mentioned in text.
         {evidence_rules}
 
-        JSON OUTPUT FORMAT:
+        JSON OUTPUT FORMAT (bilingual fields use {{"de": "...", "en": "..."}} structure):
         {{
           "model_type": "Base Model" | "LoRA Adapter" | "Finetune",
           "base_model": null,
           "params_m": null,
           "modality": "Text" | "Vision" | "Diffusion" | "Multimodal" | "Other",
           "category": "Inspection" | "VQA" | "Code" | "Extraction" | "Reasoning" | "Architecture" | "Other",
-          "newsletter_blurb": "...",
-          "key_facts": ["...", "...", "..."],
+          "newsletter_blurb": {{"de": "Deutsche Zusammenfassung...", "en": "English summary..."}},
+          "key_facts": {{"de": ["Fakt 1", "Fakt 2", "Fakt 3"], "en": ["Fact 1", "Fact 2", "Fact 3"]}},
           "delta": {{
-            "what_changed": ["..."],
-            "why_it_matters": ["..."]
+            "what_changed": {{"de": ["Änderung 1"], "en": ["Change 1"]}},
+            "why_it_matters": {{"de": ["Relevanz 1"], "en": ["Relevance 1"]}}
           }},
           "edge": {{
             "edge_ready": false,
@@ -206,7 +247,7 @@ class LLMClient:
           }},
           "manufacturing": {{
             "manufacturing_fit_score": 1,
-            "use_cases": ["..."]
+            "use_cases": {{"de": ["Anwendungsfall 1"], "en": ["Use case 1"]}}
           }},
           {evidence_block}
           "specialist_score": 1,

@@ -145,3 +145,93 @@ Run the test suite to verify filtering logic and integrations:
 ```bash
 python -m unittest discover .
 ```
+
+---
+
+## 📧 Multi-Recipient Newsletter Configuration
+
+Edge AI Scout supports **multiple newsletter recipients** with per-recipient customization:
+
+*   **Per-recipient send days**: Choose which days each recipient receives emails (e.g., Mon/Wed/Fri).
+*   **Per-recipient coverage window**: Configure different time windows per day (e.g., 72h on Monday, 24h on Friday).
+*   **Recipient type**: `debug` (full report with skip/warn stats) or `normal` (clean report without debug sections).
+*   **Per-recipient language**: English (`en`) or German (`de`).
+
+### Configuration
+
+Set `NEWSLETTER_SUBSCRIBERS_JSON` in your `.env` file:
+
+```env
+NEWSLETTER_TIMEZONE=Europe/Berlin
+
+NEWSLETTER_SUBSCRIBERS_JSON=[
+  {
+    "email": "alice@example.com",
+    "type": "normal",
+    "language": "en",
+    "send_days": ["mon","wed","fri"],
+    "default_window_hours": 24,
+    "window_hours_by_day": {"mon": 72, "wed": 48}
+  },
+  {
+    "email": "debug@example.com",
+    "type": "debug",
+    "language": "de",
+    "send_days": ["mon","tue","wed","thu","fri"],
+    "default_window_hours": 24
+  }
+]
+```
+
+### Backward Compatibility
+
+If `NEWSLETTER_SUBSCRIBERS_JSON` is not set, the system falls back to using `RECEIVER_MAIL` as a single debug recipient with German language.
+
+### Coverage Window (`processed_at`)
+
+Digest coverage is based on the `processed_at` timestamp (when the pipeline processed/saved the model), not HF's `created_at` or `lastModified`. This enables generating longer-window digests (48h/72h) purely from SQLite without additional HF/LLM API calls.
+
+---
+
+## 🌐 Internationalization (i18n)
+
+Edge AI Scout currently supports **English** (`en`) and **German** (`de`) for newsletter reports.
+
+### Adding New Languages
+
+To add support for a new language (e.g., French `fr`):
+
+1.  **Update Subscriber Config Validation** (`config.py`):
+    ```python
+    SUPPORTED_LANGUAGES = {"en", "de", "fr"}
+    ```
+
+2.  **Extend Localized String Table** (`reporter.py`):
+    Add French translations to the `LOCALIZED_STRINGS` dictionary:
+    ```python
+    "summary": {
+        "de": "Zusammenfassung",
+        "en": "Summary",
+        "fr": "Résumé",
+    },
+    # ... add French for all keys
+    ```
+
+3.  **Extend LLM Output Schema** (`llm_client.py`):
+    Update the LLM prompt to request French output alongside German and English:
+    ```
+    "newsletter_blurb": {"de": "...", "en": "...", "fr": "..."},
+    ```
+    Note: This increases token usage but keeps request count unchanged.
+
+4.  **Extend Email Subject Localization** (`mailer.py`):
+    ```python
+    EMAIL_SUBJECTS = {
+        "de": "Edge AI Scout Report - {date}",
+        "en": "Edge AI Scout Report - {date}",
+        "fr": "Rapport Edge AI Scout - {date}",
+    }
+    ```
+
+5.  **Update Tests**:
+    Add tests to verify language selection and report rendering for the new language.

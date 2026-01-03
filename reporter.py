@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Literal
 from collections import Counter
 import csv
 import os
@@ -11,6 +11,196 @@ import math
 
 import config
 from run_stats import RunStats
+
+# Localization string table for report headings
+LOCALIZED_STRINGS: Dict[str, Dict[str, str]] = {
+    "report_title": {
+        "de": "EdgeAIScout Report",
+        "en": "EdgeAIScout Report",
+    },
+    "summary": {
+        "de": "Zusammenfassung",
+        "en": "Summary",
+    },
+    "discovered_unique": {
+        "de": "Entdeckt (eindeutig)",
+        "en": "Discovered (unique)",
+    },
+    "queued_new_updated": {
+        "de": "In Warteschlange (neu/aktualisiert)",
+        "en": "Queued (new/updated)",
+    },
+    "noop_unchanged": {
+        "de": "Unverändert (bereits erfasst)",
+        "en": "No-op (unchanged/already tracked)",
+    },
+    "included_in_report": {
+        "de": "Im Report enthalten",
+        "en": "Included in report",
+    },
+    "skipped": {
+        "de": "Übersprungen",
+        "en": "Skipped",
+    },
+    "warnings": {
+        "de": "Warnungen",
+        "en": "Warnings",
+    },
+    "llm_attempted": {
+        "de": "LLM versucht",
+        "en": "LLM attempted",
+    },
+    "llm_succeeded": {
+        "de": "LLM erfolgreich",
+        "en": "LLM succeeded",
+    },
+    "llm_failed": {
+        "de": "LLM fehlgeschlagen",
+        "en": "LLM failed",
+    },
+    "top_skip_reasons": {
+        "de": "Top Skip-Gründe",
+        "en": "Top skip reasons",
+    },
+    "top_warning_reasons": {
+        "de": "Top Warnungsgründe",
+        "en": "Top warning reasons",
+    },
+    "top_skipped_uploaders": {
+        "de": "Top übersprungene Uploader",
+        "en": "Top skipped uploaders",
+    },
+    "processed_models_overview": {
+        "de": "Verarbeitete Modelle (Übersicht)",
+        "en": "Processed models (overview)",
+    },
+    "top_included_uploaders": {
+        "de": "Top enthaltene Uploader",
+        "en": "Top included uploaders",
+    },
+    "models": {
+        "de": "Modelle",
+        "en": "Models",
+    },
+    "no_models_criteria": {
+        "de": "Keine Modelle erfüllen die Kriterien für diesen Report.",
+        "en": "No models met the criteria for this report.",
+    },
+    "none": {
+        "de": "(keine)",
+        "en": "(none)",
+    },
+    "detailed_analysis": {
+        "de": "Detaillierte Analyse",
+        "en": "Detailed analysis",
+    },
+    "no_processed_models": {
+        "de": "Keine verarbeiteten Modelle anzuzeigen.",
+        "en": "No processed models to display.",
+    },
+    "key_facts": {
+        "de": "Schlüsselfakten",
+        "en": "Key facts",
+    },
+    "delta": {
+        "de": "Delta",
+        "en": "Delta",
+    },
+    "what_changed": {
+        "de": "Was ist neu?",
+        "en": "What's new?",
+    },
+    "why_relevant": {
+        "de": "Warum relevant?",
+        "en": "Why it matters?",
+    },
+    "manufacturing": {
+        "de": "Fertigung",
+        "en": "Manufacturing",
+    },
+    "use_cases": {
+        "de": "Anwendungsfälle",
+        "en": "Use cases",
+    },
+    "evidence_quotes": {
+        "de": "Belege (Zitate)",
+        "en": "Evidence (quotes)",
+    },
+    "claim": {
+        "de": "Behauptung",
+        "en": "Claim",
+    },
+    "quote": {
+        "de": "Zitat",
+        "en": "Quote",
+    },
+    "uploader": {
+        "de": "Uploader",
+        "en": "uploader",
+    },
+    "score": {
+        "de": "Score",
+        "en": "score",
+    },
+    "type": {
+        "de": "Typ",
+        "en": "type",
+    },
+    "model_id": {
+        "de": "Modell-ID",
+        "en": "Model ID",
+    },
+    "author": {
+        "de": "Autor",
+        "en": "Author",
+    },
+    "pipeline": {
+        "de": "Pipeline",
+        "en": "Pipeline",
+    },
+    "params": {
+        "de": "Parameter",
+        "en": "Params",
+    },
+    "status": {
+        "de": "Status",
+        "en": "Status",
+    },
+    "notes": {
+        "de": "Notizen",
+        "en": "Notes",
+    },
+    "tier": {
+        "de": "Stufe",
+        "en": "Tier",
+    },
+}
+
+
+def _l(key: str, lang: str = "de") -> str:
+    """Get localized string for key in specified language."""
+    strings = LOCALIZED_STRINGS.get(key, {})
+    return strings.get(lang, strings.get("en", key))
+
+
+def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> Any:
+    """
+    Extract value for specified language from bilingual field.
+    
+    If value is a dict with language keys, return the value for lang.
+    If lang is not present, try fallback_lang.
+    If neither, return the value as-is (legacy format).
+    """
+    if isinstance(value, dict) and ("de" in value or "en" in value):
+        if lang in value:
+            return value[lang]
+        if fallback_lang in value:
+            return value[fallback_lang]
+        # Return first available
+        for v in value.values():
+            return v
+    return value
+
 
 class Reporter:
     def __init__(self, output_dir: str = "."):
@@ -54,6 +244,8 @@ class Reporter:
         stats: RunStats,
         processed_models: Optional[List[Dict[str, Any]]] = None,
         date_str: Optional[str] = None,
+        language: str = "de",
+        report_type: Literal["debug", "normal"] = "debug",
     ) -> Path:
         out = Path(self.output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -65,59 +257,62 @@ class Reporter:
         path = out / f"report_{date_str}_{ts}.md"
 
         lines: list[str] = []
-        lines.append(f"# EdgeAIScout Report ({date_str})")
+        lines.append(f"# {_l('report_title', language)} ({date_str})")
         lines.append("")
 
-        lines.append("## Summary")
-        lines.append(f"- Discovered (unique): **{stats.candidates_total}**")
-        lines.append(f"- Queued (new/updated): **{stats.queued}**")
-        lines.append(f"- No-op (unchanged/already tracked): **{stats.noop_unchanged}**")
-        lines.append(f"- Included in report: **{stats.processed}**")
-        lines.append(f"- Skipped: **{stats.skipped}**")
-        lines.append(f"- Warnings: **{stats.warned}**")
-        lines.append(f"- LLM attempted: **{stats.llm_analyzed}**")
-        lines.append(f"- LLM succeeded: **{stats.llm_succeeded}**")
-        lines.append(f"- LLM failed: **{stats.llm_failed}**")
+        lines.append(f"## {_l('summary', language)}")
+        lines.append(f"- {_l('discovered_unique', language)}: **{stats.candidates_total}**")
+        lines.append(f"- {_l('queued_new_updated', language)}: **{stats.queued}**")
+        lines.append(f"- {_l('noop_unchanged', language)}: **{stats.noop_unchanged}**")
+        lines.append(f"- {_l('included_in_report', language)}: **{stats.processed}**")
+        lines.append(f"- {_l('skipped', language)}: **{stats.skipped}**")
+        lines.append(f"- {_l('warnings', language)}: **{stats.warned}**")
+        lines.append(f"- {_l('llm_attempted', language)}: **{stats.llm_analyzed}**")
+        lines.append(f"- {_l('llm_succeeded', language)}: **{stats.llm_succeeded}**")
+        lines.append(f"- {_l('llm_failed', language)}: **{stats.llm_failed}**")
         lines.append("")
 
-        lines.append("## Top skip reasons")
-        if not stats.skip_reasons:
-            lines.append("- (none)")
-        else:
-            for reason, cnt in stats.top_skip_reasons(20):
-                lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
+        # Debug sections: only show for debug report type
+        if report_type == "debug":
+            lines.append(f"## {_l('top_skip_reasons', language)}")
+            if not stats.skip_reasons:
+                lines.append(f"- {_l('none', language)}")
+            else:
+                for reason, cnt in stats.top_skip_reasons(20):
+                    lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
 
-        lines.append("")
-        lines.append("## Top warning reasons")
-        if not stats.warn_reasons:
-            lines.append("- (none)")
-        else:
-            for reason, cnt in stats.top_warn_reasons(20):
-                lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
-
-        if stats.skip_reasons_by_uploader:
             lines.append("")
-            lines.append("## Top skipped uploaders")
-            totals = Counter({u: sum(c.values()) for u, c in stats.skip_reasons_by_uploader.items()})
-            for uploader, cnt in totals.most_common(15):
-                top3 = stats.skip_reasons_by_uploader[uploader].most_common(3)
-                top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3]) if top3 else ""
-                lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}" + (f" — top: {top3_str}" if top3_str else ""))
+            lines.append(f"## {_l('top_warning_reasons', language)}")
+            if not stats.warn_reasons:
+                lines.append(f"- {_l('none', language)}")
+            else:
+                for reason, cnt in stats.top_warn_reasons(20):
+                    lines.append(f"- **{self._escape_underscores(reason)}**: {cnt}")
 
-        lines.append("")
-        lines.append("## Processed models (overview)")
+            if stats.skip_reasons_by_uploader:
+                lines.append("")
+                lines.append(f"## {_l('top_skipped_uploaders', language)}")
+                totals = Counter({u: sum(c.values()) for u, c in stats.skip_reasons_by_uploader.items()})
+                for uploader, cnt in totals.most_common(15):
+                    top3 = stats.skip_reasons_by_uploader[uploader].most_common(3)
+                    top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3]) if top3 else ""
+                    lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}" + (f" — top: {top3_str}" if top3_str else ""))
+
+            lines.append("")
+
+        lines.append(f"## {_l('processed_models_overview', language)}")
 
         if not processed_models:
-            lines.append("No models met the criteria for this report.")
+            lines.append(_l("no_models_criteria", language))
         else:
             included_uploaders = Counter((m.get("namespace") or m.get("author") or "unknown") for m in processed_models)
             lines.append("")
-            lines.append("### Top included uploaders")
+            lines.append(f"### {_l('top_included_uploaders', language)}")
             for uploader, cnt in included_uploaders.most_common(15):
                 lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}")
 
             lines.append("")
-            lines.append("### Models")
+            lines.append(f"### {_l('models', language)}")
 
             def _score(m: Dict[str, Any]) -> int:
                 a = m.get("llm_analysis") or {}
@@ -133,24 +328,37 @@ class Reporter:
                 mtype = a.get("model_type", "N/A")
                 link = f"https://huggingface.co/{mid}" if mid else ""
                 if link:
-                    lines.append(f"- **[{mid_display}]({link})** — uploader: **{uploader_display}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **[{mid_display}]({link})** — {_l('uploader', language)}: **{uploader_display}** — {_l('score', language)}: **{score}** — {_l('type', language)}: {mtype}")
                 else:
-                    lines.append(f"- **{mid_display}** — uploader: **{uploader_display}** — score: **{score}** — type: {mtype}")
+                    lines.append(f"- **{mid_display}** — {_l('uploader', language)}: **{uploader_display}** — {_l('score', language)}: **{score}** — {_l('type', language)}: {mtype}")
 
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
 
-    def generate_full_report(self, stats: RunStats, processed_models: List[Dict[str, Any]], date_str: Optional[str] = None) -> Path:
-        path = self.write_markdown_report(stats, processed_models=processed_models, date_str=date_str)
+    def generate_full_report(
+        self,
+        stats: RunStats,
+        processed_models: List[Dict[str, Any]],
+        date_str: Optional[str] = None,
+        language: str = "de",
+        report_type: Literal["debug", "normal"] = "debug",
+    ) -> Path:
+        path = self.write_markdown_report(
+            stats,
+            processed_models=processed_models,
+            date_str=date_str,
+            language=language,
+            report_type=report_type,
+        )
         base_content = path.read_text(encoding="utf-8")
 
         details: list[str] = []
         details.append("")
-        details.append("## Detailed analysis")
+        details.append(f"## {_l('detailed_analysis', language)}")
         details.append("")
 
         if not processed_models:
-            details.append("- No processed models to display.")
+            details.append(f"- {_l('no_processed_models', language)}")
         else:
             def _score(m: Dict[str, Any]) -> int:
                 a = m.get("llm_analysis") or {}
@@ -182,7 +390,7 @@ class Reporter:
                     params_str = f"{total_b or active_b} ({src})"
 
                 kind_str = m.get("author_kind", "unknown")
-                tier_str = f"Tier {m.get('trust_tier', '?')}"
+                tier_str = f"{_l('tier', language)} {m.get('trust_tier', '?')}"
                 pipeline_tag = (m.get("pipeline_tag") or "unknown").lower()
                 status = m.get("status", "processed")
                 notes = m.get("report_notes", "")
@@ -190,54 +398,55 @@ class Reporter:
                 details.append(f"### [{name_display}]({link})" if link else f"### {name_display}")
                 details.append("")
                 details.append(
-                    f"**Model ID:** `{mid}`  \n"
-                    f"**Uploader:** **{uploader_display}**  \n"
-                    f"**Author:** {kind_str} ({tier_str})  \n"
-                    f"**Pipeline:** `{pipeline_tag}`  \n"
-                    f"**Type:** {mtype}  \n"
-                    f"**Score:** **{score}/10**  \n"
-                    f"**Params:** {params_str}  \n"
-                    f"**Status:** `{status}`"
+                    f"**{_l('model_id', language)}:** `{mid}`  \n"
+                    f"**{_l('uploader', language).title()}:** **{uploader_display}**  \n"
+                    f"**{_l('author', language)}:** {kind_str} ({tier_str})  \n"
+                    f"**{_l('pipeline', language)}:** `{pipeline_tag}`  \n"
+                    f"**{_l('type', language).title()}:** {mtype}  \n"
+                    f"**{_l('score', language).title()}:** **{score}/10**  \n"
+                    f"**{_l('params', language)}:** {params_str}  \n"
+                    f"**{_l('status', language)}:** `{status}`"
                 )
                 if notes:
-                    details.append(f"**Notes:** {notes}")
+                    details.append(f"**{_l('notes', language)}:** {notes}")
                 details.append("")
 
-                blurb = a.get("newsletter_blurb")
+                # Get bilingual content for the selected language
+                blurb = _get_bilingual_value(a.get("newsletter_blurb"), language)
                 if blurb:
                     details.append(f"> {blurb}")
                     details.append("")
 
-                key_facts = a.get("key_facts") or []
+                key_facts = _get_bilingual_value(a.get("key_facts"), language) or []
                 if key_facts:
-                    details.append("#### Key facts")
+                    details.append(f"#### {_l('key_facts', language)}")
                     for fact in key_facts:
                         details.append(f"- {fact}")
                     details.append("")
 
                 delta = a.get("delta") or {}
-                what_changed = delta.get("what_changed") or []
-                why_matters = delta.get("why_it_matters") or []
+                what_changed = _get_bilingual_value(delta.get("what_changed"), language) or []
+                why_matters = _get_bilingual_value(delta.get("why_it_matters"), language) or []
                 if what_changed or why_matters:
-                    details.append("#### Delta")
+                    details.append(f"#### {_l('delta', language)}")
                     if what_changed:
-                        details.append("**Was ist neu?**")
+                        details.append(f"**{_l('what_changed', language)}**")
                         details.append("")
                         for x in what_changed:
                             details.append(f"- {x}")
                     if why_matters:
                         details.append("")
-                        details.append("**Warum relevant?**")
+                        details.append(f"**{_l('why_relevant', language)}**")
                         details.append("")
                         for x in why_matters:
                             details.append(f"- {x}")
                     details.append("")
 
                 manu = a.get("manufacturing") or {}
-                use_cases = manu.get("use_cases") or []
+                use_cases = _get_bilingual_value(manu.get("use_cases"), language) or []
                 if use_cases:
-                    details.append("#### Manufacturing")
-                    details.append("**Use cases**")
+                    details.append(f"#### {_l('manufacturing', language)}")
+                    details.append(f"**{_l('use_cases', language)}**")
                     details.append("")
                     for x in use_cases:
                         details.append(f"- {x}")
@@ -246,14 +455,14 @@ class Reporter:
                 if config.REPORT_INCLUDE_EVIDENCE:
                     evidence = a.get("evidence") or []
                     if evidence:
-                        details.append("#### Evidence (quotes)")
+                        details.append(f"#### {_l('evidence_quotes', language)}")
                         for e in evidence[:4]:
                             claim = (e.get("claim") or "").strip()
                             quote = (e.get("quote") or "").strip()
                             if claim:
-                                details.append(f"- **Claim:** {claim}")
+                                details.append(f"- **{_l('claim', language)}:** {claim}")
                             if quote:
-                                details.append(f"  - Quote: “{quote}”")
+                                details.append(f'  - {_l("quote", language)}: "{quote}"')
                         details.append("")
 
                 details.append("---")
@@ -263,7 +472,7 @@ class Reporter:
         path.write_text(full_content, encoding="utf-8")
         return path
 
-    def export_csv(self, models: List[Dict[str, Any]], filename: str = "labeling_pending.csv") -> str:
+    def export_csv(self, models: List[Dict[str, Any]], filename: str = "labeling_pending.csv", language: str = "de") -> str:
         filepath = os.path.join(self.output_dir, filename)
         file_exists = os.path.exists(filepath)
 
@@ -285,6 +494,9 @@ class Reporter:
 
             for m in models:
                 a = m.get("llm_analysis") or {}
+                blurb = _get_bilingual_value(a.get("newsletter_blurb"), language) or ""
+                key_facts = _get_bilingual_value(a.get("key_facts"), language) or []
+                use_cases = _get_bilingual_value((a.get("manufacturing") or {}).get("use_cases"), language) or []
                 writer.writerow([
                     m.get("id", ""),
                     m.get("namespace") or m.get("author") or "",
@@ -293,9 +505,9 @@ class Reporter:
                     m.get("params_total_b"),
                     m.get("params_active_b"),
                     m.get("params_source"),
-                    a.get("newsletter_blurb", ""),
-                    " | ".join(a.get("key_facts", []) or []),
-                    " | ".join((a.get("manufacturing", {}) or {}).get("use_cases", []) or []),
+                    blurb if isinstance(blurb, str) else str(blurb),
+                    " | ".join(key_facts) if isinstance(key_facts, list) else str(key_facts),
+                    " | ".join(use_cases) if isinstance(use_cases, list) else str(use_cases),
                 ])
 
         return filepath

@@ -5,6 +5,8 @@ import sqlite3
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any
+
 import dateutil.parser
 
 logger = logging.getLogger("EdgeAIScout")
@@ -50,6 +52,7 @@ class Database:
         self._ensure_column(cursor, "models", "pipeline_tag", "TEXT")
         self._ensure_column(cursor, "models", "filter_trace", "TEXT")
         self._ensure_column(cursor, "models", "report_notes", "TEXT")
+        self._ensure_column(cursor, "models", "processed_at", "TIMESTAMP")
 
         # New: separate total/active params
         self._ensure_column(cursor, "models", "params_total_b", "REAL")
@@ -262,6 +265,8 @@ class Database:
     def save_model(self, model_data: dict) -> None:
         conn = self.get_connection()
         cursor = conn.cursor()
+        # Set processed_at to current UTC time if not provided
+        processed_at = model_data.get("processed_at") or datetime.now(timezone.utc).isoformat()
         try:
             cursor.execute(
                 """
@@ -269,9 +274,10 @@ class Database:
                     id, name, author, created_at, last_modified,
                     params_est, params_total_b, params_active_b, params_source,
                     hf_tags, llm_analysis, status,
-                    namespace, author_kind, trust_tier, pipeline_tag, filter_trace, report_notes
+                    namespace, author_kind, trust_tier, pipeline_tag, filter_trace, report_notes,
+                    processed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     model_data["id"],
@@ -292,11 +298,79 @@ class Database:
                     model_data.get("pipeline_tag"),
                     json.dumps(model_data.get("filter_trace", [])),
                     model_data.get("report_notes"),
+                    processed_at,
                 ),
             )
             conn.commit()
         except Exception as e:
             logger.error(f"Error saving model {model_data.get('id')}: {e}")
+
+    def get_models_by_processed_window(
+        self,
+        window_hours: int,
+        min_specialist_score: int = 0,
+        exclude_review_required: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve models processed within the last `window_hours` hours.
+        
+        This enables DB-only selection for longer-window newsletters (48h/72h/...)
+        without additional HF/LLM API calls.
+        
+        Args:
+            window_hours: Number of hours to look back from now
+            min_specialist_score: Minimum specialist score to include (default: 0)
+            exclude_review_required: Exclude models with status != 'processed' (default: True)
+        
+        Returns:
+            List of model dictionaries with parsed JSON fields
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+        cutoff_str = cutoff.isoformat()
+        
+        query = """
+            SELECT id, name, author, created_at, last_modified,
+                   params_est, params_total_b, params_active_b, params_source,
+                   hf_tags, llm_analysis, status,
+                   namespace, author_kind, trust_tier, pipeline_tag, filter_trace, report_notes,
+                   processed_at
+            FROM models
+            WHERE processed_at >= ?
+        """
+        params: list = [cutoff_str]
+        
+        if exclude_review_required:
+            query += " AND status = 'processed'"
+        
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        
+        models = []
+        for row in rows:
+            model = dict(row)
+            # Parse JSON fields
+            try:
+                model["hf_tags"] = json.loads(model.get("hf_tags") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                model["hf_tags"] = []
+            try:
+                model["llm_analysis"] = json.loads(model.get("llm_analysis") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                model["llm_analysis"] = {}
+            try:
+                model["filter_trace"] = json.loads(model.get("filter_trace") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                model["filter_trace"] = []
+            
+            # Filter by specialist score
+            score = int((model.get("llm_analysis") or {}).get("specialist_score", 0) or 0)
+            if score >= min_specialist_score:
+                models.append(model)
+        
+        return models
 
     def close(self) -> None:
         if self.conn:

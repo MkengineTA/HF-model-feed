@@ -14,6 +14,7 @@ import model_filters as filters
 from namespace_policy import classify_namespace
 from run_stats import RunStats
 from param_estimator import ParamEstimate
+from config import NewsletterSubscriber
 
 class TestIntegration(unittest.TestCase):
 
@@ -24,9 +25,21 @@ class TestIntegration(unittest.TestCase):
     @patch('main.Mailer')
     @patch('main.estimate_parameters')
     @patch('main.security_warnings')
+    @patch('digest.get_newsletter_subscribers')
     @patch('builtins.open', new_callable=mock_open, read_data="# Report Content")
-    def test_full_flow(self, mock_file, mock_security_warnings, mock_estimate_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
+    def test_full_flow(self, mock_file, mock_get_subscribers, mock_security_warnings, mock_estimate_params, MockMailer, MockReporter, MockLLMClient, MockHFClient, MockDatabase):
         # Setup Mocks
+        
+        # Mock newsletter subscribers to return a single debug subscriber
+        mock_get_subscribers.return_value = [
+            NewsletterSubscriber(
+                email="test@example.com",
+                type="debug",
+                language="de",
+                send_days=["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                default_window_hours=24,
+            )
+        ]
 
         # Database
         mock_db_instance = MockDatabase.return_value
