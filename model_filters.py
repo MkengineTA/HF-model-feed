@@ -21,7 +21,8 @@ ROBOTICS_KEYWORDS_SUBSTRING = [
 # Each tuple is (pattern, human-readable label for logs)
 ROBOTICS_KEYWORDS_REGEX = [
     (re.compile(r"\brl\b", re.IGNORECASE), "rl"),        # standalone "rl" only
-    (re.compile(r"\bros2?\b", re.IGNORECASE), "ros"),    # "ros" or "ros2" as standalone words
+    (re.compile(r"\bros2\b", re.IGNORECASE), "ros2"),    # "ros2" as standalone word
+    (re.compile(r"\bros\b", re.IGNORECASE), "ros"),      # "ros" as standalone word
 ]
 
 # Pipelines that indicate robotics/embodied AI
