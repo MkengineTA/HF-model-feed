@@ -30,6 +30,9 @@ class Reporter:
 
         if val < 1:
             rounded_b = round(val, 2)
+            if rounded_b >= 1.0:
+                # Handle values that round up to 1.0B (e.g. 0.995B -> 1.00B)
+                return "1.0B"
             millions = round(rounded_b * 1000)
             return f"{millions}M"
 
