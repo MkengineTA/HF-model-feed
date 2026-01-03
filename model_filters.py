@@ -42,18 +42,221 @@ VISUAL_PIPELINES = [
     "diffusers", "controlnet"
 ]
 
-QUANT_NAME_PATTERNS = [
-    re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX)($|[-_])", re.IGNORECASE),
+# Export/conversion format name patterns - these are reliable indicators
+# Used for both name detection (suspected) and warnings
+# NOTE: These patterns must only include canonical short forms that match
+# EXPORT_FORMAT_REGISTRY keys exactly (e.g., "exl2" not "exllama2").
+# Aliases like "exllama2" are intentionally handled via tags/README evidence, not name-only.
+EXPORT_FORMAT_NAME_PATTERNS = [
+    re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX|HQQ)($|[-_])", re.IGNORECASE),
+]
+
+# Generic quantization patterns - common dtype/bitness markers
+# NOT reliable indicators of export/conversion, should not trigger warnings alone
+GENERIC_QUANT_NAME_PATTERNS = [
     re.compile(r"(^|[-_])(Q\d_[K0-9A-Z]+|Q\d)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(int4|int8|fp16|bf16)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(\d+bit)($|[-_])", re.IGNORECASE),
-    re.compile(r"(^|[-_])(hqq|quip|squeeze)($|[-_])", re.IGNORECASE),
+    re.compile(r"(^|[-_])(quip|squeeze)($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])(I|T)Q\d(_[A-Z0-9]+)*($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])Q[2-8](_K(_(XXS|XS|S|M|L|XL))?|_[01])($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])BF16($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])FP8($|[-_])", re.IGNORECASE),
     re.compile(r"(^|[-_])FP16($|[-_])", re.IGNORECASE),
 ]
+
+# Combined patterns for has_quant_in_name() - used by other filters
+QUANT_NAME_PATTERNS = EXPORT_FORMAT_NAME_PATTERNS + GENERIC_QUANT_NAME_PATTERNS
+
+# =====================================================================
+# Export/Quantization Format Registry (evidence-based detection)
+# =====================================================================
+# Each format has:
+#   - tags: HuggingFace tags that indicate this format (strong evidence)
+#   - file_exts: file extensions that prove this format (strong evidence)
+#   - config_files: config filenames that suggest this format (suspected, needs corroboration)
+#   - readme_keywords: phrases in README that confirm conversion/quantization
+EXPORT_FORMAT_REGISTRY = {
+    "onnx": {
+        "tags": ["onnx"],
+        "file_exts": [".onnx"],
+        "config_files": [],
+        "readme_keywords": ["converted to onnx", "onnx export", "onnx conversion", "exported to onnx"],
+    },
+    "gguf": {
+        "tags": ["gguf"],
+        "file_exts": [".gguf"],
+        "config_files": [],
+        "readme_keywords": ["gguf build", "gguf conversion", "converted to gguf"],
+    },
+    "ggml": {
+        "tags": ["ggml"],
+        "file_exts": [".ggml"],
+        "config_files": [],
+        "readme_keywords": ["ggml conversion", "converted to ggml"],
+    },
+    "gptq": {
+        "tags": ["gptq"],
+        "file_exts": [],
+        "config_files": ["gptq_config.json"],  # Only format-specific config
+        "readme_keywords": ["quantized to gptq", "gptq quantization", "gptq version"],
+    },
+    "awq": {
+        "tags": ["awq"],
+        "file_exts": [],
+        "config_files": ["awq_config.json"],  # Only format-specific config
+        "readme_keywords": ["quantized to awq", "awq quantization", "awq version"],
+    },
+    "exl2": {
+        "tags": ["exl2", "exllama2"],
+        "file_exts": [],
+        "config_files": [],
+        "readme_keywords": ["exl2 quantization", "exllama2", "exllamav2"],
+    },
+    "hqq": {
+        "tags": ["hqq"],
+        "file_exts": [],
+        "config_files": ["hqq_config.json"],
+        "readme_keywords": ["hqq quantization", "quantized with hqq"],
+    },
+}
+
+
+def classify_export_conversion_evidence(
+    model_id: str,
+    tags,
+    file_details,
+    readme_text: str | None = None,
+) -> dict:
+    """
+    Classify export/conversion evidence for a model.
+    
+    Returns a dict with:
+      - level: "strong" | "suspected" | "none"
+      - format: detected format (e.g., "onnx", "gguf", "gptq") or None
+      - evidence: dict with matched_tag, matched_file, matched_config, matched_name, matched_readme_keyword
+    
+    Note: Only export format patterns (onnx/gguf/gptq/awq/exl2/hqq) trigger suspected warnings.
+    Generic dtype markers (fp16/bf16/int8/etc.) do NOT trigger warnings alone.
+    """
+    result = {
+        "level": "none",
+        "format": None,
+        "evidence": {
+            "matched_tag": None,
+            "matched_file": None,
+            "matched_config": None,
+            "matched_name": None,
+            "matched_readme_keyword": None,
+        },
+    }
+    
+    tagset = {t.lower() for t in (tags or [])}
+    
+    # Build file path set from file_details
+    file_paths = []
+    if isinstance(file_details, list):
+        for f in file_details:
+            p = (f.get("path") or "").strip().lower()
+            if p:
+                file_paths.append(p)
+    
+    # Check for strong evidence across all formats (tags and file extensions only)
+    for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
+        # 1. Tag-based evidence (strong)
+        for tag in fmt_info["tags"]:
+            if tag.lower() in tagset:
+                result["level"] = "strong"
+                result["format"] = fmt_name
+                result["evidence"]["matched_tag"] = tag
+                return result
+        
+        # 2. File extension evidence (strong)
+        for ext in fmt_info["file_exts"]:
+            for fp in file_paths:
+                if fp.endswith(ext.lower()):
+                    result["level"] = "strong"
+                    result["format"] = fmt_name
+                    result["evidence"]["matched_file"] = fp
+                    return result
+    
+    # Check for config files (suspected evidence, needs corroboration for strong)
+    config_match_fmt = None
+    config_match_path = None
+    for fmt_name, fmt_info in EXPORT_FORMAT_REGISTRY.items():
+        for cfg in fmt_info["config_files"]:
+            cfg_lower = cfg.lower()
+            for fp in file_paths:
+                if fp.endswith(cfg_lower) or fp.split("/")[-1] == cfg_lower:
+                    config_match_fmt = fmt_name
+                    config_match_path = fp
+                    break
+            if config_match_fmt:
+                break
+        if config_match_fmt:
+            break
+    
+    # Check for export format name markers (only these trigger suspected warnings)
+    # Direct registry lookup since name patterns only include canonical forms
+    repo_name = (model_id or "").split("/")[-1]
+    name_match_fmt = None
+    name_match_text = None
+    
+    for p in EXPORT_FORMAT_NAME_PATTERNS:
+        match = p.search(repo_name)
+        if match:
+            matched_text = match.group(0).strip("-_").lower()
+            # Direct lookup - patterns are designed to match registry keys exactly
+            if matched_text in EXPORT_FORMAT_REGISTRY:
+                name_match_fmt = matched_text
+                name_match_text = match.group(0)
+            break
+    
+    # Determine evidence level based on combinations
+    # Config + name match for same format = strong
+    if config_match_fmt and name_match_fmt and config_match_fmt == name_match_fmt:
+        result["level"] = "strong"
+        result["format"] = config_match_fmt
+        result["evidence"]["matched_config"] = config_match_path
+        result["evidence"]["matched_name"] = name_match_text
+        return result
+    
+    # Config alone = suspected (needs README confirmation to be strong)
+    if config_match_fmt:
+        result["level"] = "suspected"
+        result["format"] = config_match_fmt
+        result["evidence"]["matched_config"] = config_match_path
+        
+        # README can upgrade to strong
+        if readme_text:
+            readme_lower = readme_text.lower()
+            for kw in EXPORT_FORMAT_REGISTRY[config_match_fmt]["readme_keywords"]:
+                if kw in readme_lower:
+                    result["level"] = "strong"
+                    result["evidence"]["matched_readme_keyword"] = kw
+                    return result
+        return result
+    
+    # Export format name match = suspected (needs README confirmation to be strong)
+    if name_match_fmt:
+        result["level"] = "suspected"
+        result["format"] = name_match_fmt
+        result["evidence"]["matched_name"] = name_match_text
+        
+        # README can upgrade to strong
+        if readme_text:
+            readme_lower = readme_text.lower()
+            for kw in EXPORT_FORMAT_REGISTRY[name_match_fmt]["readme_keywords"]:
+                if kw in readme_lower:
+                    result["level"] = "strong"
+                    result["evidence"]["matched_readme_keyword"] = kw
+                    return result
+        return result
+    
+    # Generic quant patterns (fp16, bf16, int8, etc.) - do NOT trigger warnings
+    # These are handled silently - no suspected level, no warnings
+    
+    return result
 
 UNSLOTH_TEMPLATE_MARKERS = [
     "this llama model was trained 2x faster with unsloth",
@@ -222,13 +425,15 @@ def has_quant_in_name(model_id: str) -> bool:
     repo_name = (model_id or "").split("/")[-1]
     return any(p.search(repo_name) for p in QUANT_NAME_PATTERNS)
 
-def is_export_or_conversion(model_id: str, tags, file_details) -> bool:
-    tagset = {t.lower() for t in (tags or [])}
-    if "gguf" in tagset or "onnx" in tagset or "gptq" in tagset or "awq" in tagset:
-        return True
-    if has_quant_in_name(model_id):
-        return True
-    return False
+def is_export_or_conversion(model_id: str, tags, file_details, readme_text: str | None = None) -> bool:
+    """
+    Check if a model is an export/conversion/quantization.
+    
+    Returns True only for strong evidence. Name-only matches return False.
+    Use classify_export_conversion_evidence() for detailed classification.
+    """
+    evidence = classify_export_conversion_evidence(model_id, tags, file_details, readme_text)
+    return evidence["level"] == "strong"
 
 def has_external_links(readme: str) -> bool:
     return bool(readme) and ("http" in readme)

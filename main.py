@@ -399,15 +399,31 @@ def main():
             if filters.is_excluded_content(model_id, tags):
                 filter_trace.append("skip:nsfw_excluded")
 
-            if filters.is_export_or_conversion(model_id, tags, file_details):
+            # Evidence-based export/conversion detection
+            export_evidence = filters.classify_export_conversion_evidence(model_id, tags, file_details)
+            if export_evidence["level"] == "strong":
                 filter_trace.append("skip:export_conversion")
+            elif export_evidence["level"] == "suspected":
+                # Record warning for suspected export/conversion, but continue processing
+                stats.record_warn(
+                    model_id,
+                    "warn:suspected_export_conversion",
+                    author=uploader,
+                    format=export_evidence["format"],
+                    evidence=export_evidence["evidence"],
+                )
+                filter_trace.append("warn:suspected_export_conversion")
 
             if "skip:nsfw_excluded" in filter_trace:
                 skip(model_id, uploader, "skip:nsfw_excluded", trace=filter_trace)
                 continue
 
-            if "skip:generative_visual" in filter_trace or "skip:export_conversion" in filter_trace:
-                skip(model_id, uploader, filter_trace[0], trace=filter_trace)
+            if "skip:generative_visual" in filter_trace:
+                skip(model_id, uploader, "skip:generative_visual", trace=filter_trace)
+                continue
+
+            if "skip:export_conversion" in filter_trace:
+                skip(model_id, uploader, "skip:export_conversion", trace=filter_trace)
                 continue
 
             # ---- Phase 1: README ----
@@ -421,6 +437,24 @@ def main():
                 else:
                     skip(model_id, uploader, "skip:no_readme")
                 continue
+
+            # Optional README confirmation for suspected export/conversion
+            if "warn:suspected_export_conversion" in filter_trace and readme_content:
+                # Re-check with README text - may upgrade to strong evidence
+                export_evidence_with_readme = filters.classify_export_conversion_evidence(
+                    model_id, tags, file_details, readme_text=readme_content
+                )
+                if export_evidence_with_readme["level"] == "strong":
+                    filter_trace.append("skip:export_conversion")
+                    skip(
+                        model_id,
+                        uploader,
+                        "skip:export_conversion",
+                        trace=filter_trace,
+                        readme_confirmed=True,
+                        format=export_evidence_with_readme["format"],
+                    )
+                    continue
 
             if filters.is_empty_or_stub_readme(readme_content):
                 skip(model_id, uploader, "skip:empty_readme")
