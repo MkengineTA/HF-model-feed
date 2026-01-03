@@ -44,6 +44,9 @@ VISUAL_PIPELINES = [
 
 # Export/conversion format name patterns - these are reliable indicators
 # Used for both name detection (suspected) and warnings
+# NOTE: These patterns must only include canonical short forms that match
+# EXPORT_FORMAT_REGISTRY keys exactly (e.g., "exl2" not "exllama2").
+# Aliases like "exllama2" are intentionally handled via tags/README evidence, not name-only.
 EXPORT_FORMAT_NAME_PATTERNS = [
     re.compile(r"(^|[-_])(GGUF|GGML|AWQ|GPTQ|EXL2|ONNX|HQQ)($|[-_])", re.IGNORECASE),
 ]
@@ -194,6 +197,7 @@ def classify_export_conversion_evidence(
             break
     
     # Check for export format name markers (only these trigger suspected warnings)
+    # Direct registry lookup since name patterns only include canonical forms
     repo_name = (model_id or "").split("/")[-1]
     name_match_fmt = None
     name_match_text = None
@@ -202,11 +206,10 @@ def classify_export_conversion_evidence(
         match = p.search(repo_name)
         if match:
             matched_text = match.group(0).strip("-_").lower()
-            for fmt_name in EXPORT_FORMAT_REGISTRY.keys():
-                if fmt_name == matched_text:
-                    name_match_fmt = fmt_name
-                    name_match_text = match.group(0)
-                    break
+            # Direct lookup - patterns are designed to match registry keys exactly
+            if matched_text in EXPORT_FORMAT_REGISTRY:
+                name_match_fmt = matched_text
+                name_match_text = match.group(0)
             break
     
     # Determine evidence level based on combinations
