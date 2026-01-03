@@ -62,5 +62,15 @@ class TestFilters(unittest.TestCase):
         self.assertTrue(filters.is_export_or_conversion("model-gguf", ["gguf"], []))
         self.assertFalse(filters.is_export_or_conversion("model-base", [], []))
 
+    def test_compute_info_score_accepts_yaml_none(self):
+        score = filters.compute_info_score(
+            readme="Some README text without YAML frontmatter.",
+            yaml_meta=None,
+            tags=[],
+            links_present=False,
+        )
+        self.assertIsInstance(score, int)
+
+
 if __name__ == '__main__':
     unittest.main()
