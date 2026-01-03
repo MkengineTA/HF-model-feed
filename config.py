@@ -168,3 +168,6 @@ def _parse_csv_set(val: str | None) -> set[str]:
 # ENV Overrides
 BLACKLIST_NAMESPACES |= _parse_csv_set(os.getenv("HF_BLACKLIST"))
 WHITELIST_NAMESPACES |= _parse_csv_set(os.getenv("HF_WHITELIST"))
+
+# --- Dynamic blacklist thresholds ---
+DYNAMIC_BLACKLIST_NO_README_MIN = int(os.getenv("DYNAMIC_BLACKLIST_NO_README_MIN", "20"))

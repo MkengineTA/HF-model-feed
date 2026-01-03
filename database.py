@@ -124,6 +124,32 @@ class Database:
         )
         conn.commit()
 
+    def get_dynamic_blacklist(self) -> set[str]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'dynamic_blacklist'")
+        row = cursor.fetchone()
+        if row and row["value"]:
+            try:
+                data = json.loads(row["value"])
+                if not isinstance(data, (list, tuple, set)):
+                    logger.warning("Dynamic blacklist metadata is not a list; resetting.")
+                    return set()
+                return {str(x) for x in data if str(x).strip()}
+            except Exception:
+                logger.warning("Failed to parse dynamic blacklist from metadata; resetting.")
+        return set()
+
+    def save_dynamic_blacklist(self, namespaces: set[str]) -> None:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        payload = json.dumps(sorted(namespaces))
+        cursor.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('dynamic_blacklist', ?)",
+            (payload,),
+        )
+        conn.commit()
+
     def get_author(self, namespace: str):
         conn = self.get_connection()
         cursor = conn.cursor()

@@ -18,7 +18,7 @@ from llm_client import LLMClient
 from reporter import Reporter
 from mailer import Mailer
 import model_filters as filters
-from namespace_policy import classify_namespace
+import namespace_policy
 from run_stats import RunStats
 from param_estimator import estimate_parameters, security_warnings
 
@@ -66,6 +66,38 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     return q2 in r2
 
 
+def apply_dynamic_blacklist(db: Database, stats: RunStats, dry_run: bool) -> None:
+    if dry_run:
+        return
+
+    prolific_no_readme = stats.prolific_skipped_uploaders(
+        "skip:no_readme", config.DYNAMIC_BLACKLIST_NO_README_MIN
+    )
+    normalized = {namespace_policy.normalize_namespace(u) for u in prolific_no_readme}
+    whitelist_snapshot = namespace_policy.get_whitelist()
+    base_blacklist_snapshot = namespace_policy.get_base_blacklist()
+    candidates_for_blacklist = {
+        u
+        for u in normalized
+        if u and u not in whitelist_snapshot and u not in base_blacklist_snapshot
+    }
+
+    if not candidates_for_blacklist:
+        return
+
+    existing_dynamic = db.get_dynamic_blacklist()
+    new_additions = candidates_for_blacklist - existing_dynamic
+    if not new_additions:
+        return
+
+    combined = existing_dynamic | candidates_for_blacklist
+    db.save_dynamic_blacklist(combined)
+    namespace_policy.set_dynamic_blacklist(combined)
+    logger.info(
+        f"Dynamic blacklist updated with {len(new_additions)} uploader(s): {sorted(new_additions)}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Edge AI Scout & Specialist Model Monitor")
     parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
@@ -78,6 +110,9 @@ def main():
     date_str = current_run_time.strftime("%Y-%m-%d")
 
     db = Database(config.DB_PATH)
+    dynamic_blacklist = db.get_dynamic_blacklist()
+    if dynamic_blacklist:
+        namespace_policy.set_dynamic_blacklist(dynamic_blacklist)
     hf_client = HFClient(token=config.HF_TOKEN)
 
     llm_client = LLMClient(
@@ -169,7 +204,7 @@ def main():
 
         # ✅ Fix 2: niemals den ganzen Run durch einen Einzel-Fehler killen
         try:
-            decision, ns_reason = classify_namespace(uploader)
+            decision, ns_reason = namespace_policy.classify_namespace(uploader)
             is_whitelisted = (decision == "allow_whitelist")
 
             if decision == "deny_blacklist":
@@ -464,6 +499,8 @@ def main():
             logger.exception(f"Unhandled error while processing {model_id}: {e}")
             skip(model_id, uploader, "skip:exception", error=str(e))
             continue
+
+    apply_dynamic_blacklist(db, stats, args.dry_run)
 
     if processed_models or stats.skipped > 0 or stats.warned > 0:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")
