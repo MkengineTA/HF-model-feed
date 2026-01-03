@@ -52,6 +52,25 @@ class TestReporter(unittest.TestCase):
         self.assertNotIn("Confidence:", content)
         self.assertNotIn("Unknowns:", content)
 
+    def test_format_params_b_boundaries(self):
+        cases = {
+            0: "0M",
+            -0.5: "0M",
+            0.0004: "0M",
+            0.268: "270M",
+            0.995: "1.0B",
+            0.999: "1.0B",
+            1.0: "1.0B",
+            1.001: "1.0B",
+            1.95: "2B",
+            2.01: "2B",
+            2.9: "3B",
+        }
+
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(Reporter._format_params_b(value), expected)
+
 
     def test_params_are_rounded_in_report(self):
         stats = RunStats()

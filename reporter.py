@@ -7,6 +7,7 @@ from typing import Optional, Any, Dict, List
 from collections import Counter
 import csv
 import os
+import math
 
 import config
 from run_stats import RunStats
@@ -28,16 +29,19 @@ class Reporter:
         except (TypeError, ValueError):
             return None
 
+        if val <= 0:
+            return "0M"
+
         if val < 1:
-            rounded_b = round(val, 2)
+            rounded_b = math.floor(val * 100 + 0.5) / 100
             if rounded_b >= 1.0:
                 # Handle values that round up to 1.0B (e.g. 0.995B -> 1.00B)
                 return "1.0B"
-            millions = round(rounded_b * 1000)
+            millions = int(round(rounded_b * 1000))
             return f"{millions}M"
 
         if val < 2:
-            rounded = round(val, 1)
+            rounded = math.floor(val * 10 + 0.5) / 10
             if rounded >= 2.0:
                 # If rounding pushes us to 2.0B, format as whole billions per requirements
                 return f"{int(round(rounded))}B"
