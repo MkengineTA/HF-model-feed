@@ -62,7 +62,7 @@ class TestFilters(unittest.TestCase):
         self.assertTrue(filters.is_export_or_conversion("model-gguf", ["gguf"], []))
         self.assertFalse(filters.is_export_or_conversion("model-base", [], []))
         
-        # Test ONNX filtering with forward slash (issue example)
+        # Test ONNX filtering - checks repo name only, not namespace
         self.assertTrue(filters.is_export_or_conversion("ryanli123/onnx", [], []))
         self.assertTrue(filters.is_export_or_conversion("user/model-onnx", [], []))
         self.assertTrue(filters.is_export_or_conversion("user/onnx-model", [], []))
@@ -78,6 +78,11 @@ class TestFilters(unittest.TestCase):
         # Test models that should NOT be filtered
         self.assertFalse(filters.is_export_or_conversion("myonnx", [], []))
         self.assertFalse(filters.is_export_or_conversion("onnxmodel", [], []))
+        
+        # Namespace should NOT affect filtering (only repo name matters)
+        self.assertFalse(filters.is_export_or_conversion("onnx-community/model", [], []))
+        self.assertFalse(filters.is_export_or_conversion("gguf-user/model", [], []))
+        self.assertFalse(filters.is_export_or_conversion("myonnx/normalmodel", [], []))
 
     def test_compute_info_score_accepts_yaml_none(self):
         score = filters.compute_info_score(
