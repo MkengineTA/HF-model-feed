@@ -38,6 +38,9 @@ class Reporter:
 
         if val < 2:
             rounded = round(val, 1)
+            if rounded >= 2.0:
+                # If rounding pushes us to 2.0B, format as whole billions per requirements
+                return f"{int(round(rounded))}B"
             return f"{rounded:.1f}B"
 
         return f"{int(round(val))}B"
