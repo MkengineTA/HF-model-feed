@@ -66,36 +66,60 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     return q2 in r2
 
 
+def tree_has_readme(file_details) -> bool:
+    if not isinstance(file_details, list):
+        return False
+    for item in file_details:
+        path = (item.get("path") or "").strip().lower()
+        if not path:
+            continue
+        if path.endswith("readme.md") or path.endswith("modelcard.md"):
+            return True
+        leaf = path.split("/")[-1]
+        if leaf.startswith("readme"):
+            return True
+    return False
+
+
 def apply_dynamic_blacklist(db: Database, stats: RunStats, dry_run: bool) -> None:
     if dry_run:
         return
 
-    prolific_no_readme = stats.prolific_skipped_uploaders(
-        "skip:no_readme", config.DYNAMIC_BLACKLIST_NO_README_MIN
-    )
-    normalized = {namespace_policy.normalize_namespace(u) for u in prolific_no_readme}
+    reason = "skip:no_readme"
+    threshold = config.DYNAMIC_BLACKLIST_NO_README_MIN
+
     whitelist_snapshot = namespace_policy.get_whitelist()
     base_blacklist_snapshot = namespace_policy.get_base_blacklist()
-    candidates_for_blacklist = {
-        u
-        for u in normalized
-        if u and u not in whitelist_snapshot and u not in base_blacklist_snapshot
-    }
 
-    if not candidates_for_blacklist:
+    additions: dict[str, int] = {}
+    for uploader, counter in stats.skip_reasons_by_uploader.items():
+        count = counter.get(reason, 0)
+        if count < threshold:
+            continue
+        top_count = max(counter.values()) if counter else 0
+        if count != top_count:
+            continue
+
+        normalized = namespace_policy.normalize_namespace(uploader)
+        if not normalized:
+            continue
+        if normalized in whitelist_snapshot or normalized in base_blacklist_snapshot:
+            continue
+        additions[normalized] = count
+
+    if not additions:
         return
 
     existing_dynamic = db.get_dynamic_blacklist()
-    new_additions = candidates_for_blacklist - existing_dynamic
-    if not new_additions:
-        return
+    new_additions = {ns: cnt for ns, cnt in additions.items() if ns not in existing_dynamic}
+    db.upsert_dynamic_blacklist(additions, reason=reason)
 
-    combined = existing_dynamic | candidates_for_blacklist
-    db.save_dynamic_blacklist(combined)
+    combined = existing_dynamic | set(additions.keys())
     namespace_policy.set_dynamic_blacklist(combined)
-    logger.info(
-        f"Dynamic blacklist updated with {len(new_additions)} uploader(s): {sorted(new_additions)}"
-    )
+    if new_additions:
+        logger.info(
+            f"Dynamic blacklist updated with {len(new_additions)} uploader(s): {sorted(new_additions)}"
+        )
 
 
 def main():
@@ -320,7 +344,13 @@ def main():
             # ---- Phase 1: README ----
             readme_content = hf_client.get_model_readme(model_id)
             if not readme_content:
-                skip(model_id, uploader, "skip:no_readme")
+                has_tree = isinstance(file_details, list)
+                has_readme_candidate = tree_has_readme(file_details)
+                if has_readme_candidate or not has_tree:
+                    stats.record_warn(model_id, "warn:readme_fetch_failed", author=uploader)
+                    skip(model_id, uploader, "skip:readme_fetch_failed")
+                else:
+                    skip(model_id, uploader, "skip:no_readme")
                 continue
 
             if filters.is_empty_or_stub_readme(readme_content):
