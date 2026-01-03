@@ -6,11 +6,17 @@ import hashlib
 from typing import Optional, Any
 from urllib.parse import urlparse
 
-# Keywords
+# Keywords - Only robotics-specific terms that are unlikely to appear in non-robotics contexts
 ROBOTICS_KEYWORDS = [
-    "robot", "manipulation", "control", "rl", "reinforcement learning",
-    "sim2real", "policy", "trajectory", "lidar", "slam", "ros", "ros2",
-    "kinematics", "dynamics", "actuator", "sensor", "vla", "openvla", "lerobot"
+    "robot", "robotics", "robotik", "roboter", "manipulation", "rl", "reinforcement learning",
+    "reinforcement-learning", "sim2real", "lidar", "slam", "ros", "ros2",
+    "kinematics", "actuator", "vla", "openvla", "lerobot", "panda-reach", "pandareach",
+    "gym-robotics", "pybullet", "mujoco", "isaacgym"
+]
+
+# Pipelines that indicate robotics/embodied AI
+ROBOTICS_PIPELINES = [
+    "reinforcement-learning",
 ]
 
 VISUAL_KEYWORDS = [
@@ -72,11 +78,42 @@ def is_robotics_but_keep_vqa(model_info, tags, readme_text: str | None = None) -
     pipeline = get_pipeline_tag(model_info)
     if pipeline in ["visual-question-answering", "image-text-to-text"]:
         return False
+    # Check pipeline tag for robotics pipelines
+    if pipeline in ROBOTICS_PIPELINES:
+        return True
     tagset = {t.lower() for t in (tags or [])}
     if any(k in tagset for k in ROBOTICS_KEYWORDS):
         return True
     text = (readme_text or "").lower()
     if any(k in text for k in ROBOTICS_KEYWORDS):
+        return True
+    return False
+
+def llm_analysis_contains_robotics(llm_analysis: dict | None) -> bool:
+    """Check if LLM-generated content contains robotics-related terms.
+    
+    This is a secondary filter to catch robotics models that may have escaped
+    the initial README-based filter but whose LLM analysis reveals robotics content.
+    """
+    if not llm_analysis:
+        return False
+    
+    # Collect all text from the LLM analysis
+    text_parts = []
+    text_parts.append(llm_analysis.get("newsletter_blurb") or "")
+    text_parts.extend(llm_analysis.get("key_facts") or [])
+    
+    delta = llm_analysis.get("delta") or {}
+    text_parts.extend(delta.get("what_changed") or [])
+    text_parts.extend(delta.get("why_it_matters") or [])
+    
+    manu = llm_analysis.get("manufacturing") or {}
+    text_parts.extend(manu.get("use_cases") or [])
+    
+    combined_text = " ".join(str(p) for p in text_parts).lower()
+    
+    # Check for robotics keywords in the combined text
+    if any(k in combined_text for k in ROBOTICS_KEYWORDS):
         return True
     return False
 

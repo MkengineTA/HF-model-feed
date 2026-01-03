@@ -58,6 +58,46 @@ class TestFilters(unittest.TestCase):
         mock_info.pipeline_tag = "visual-question-answering"
         self.assertFalse(filters.is_robotics_but_keep_vqa(mock_info, ["robot"]))
 
+    def test_is_robotics_reinforcement_learning_pipeline(self):
+        """Test that reinforcement-learning pipeline is correctly identified as robotics."""
+        mock_info = MagicMock()
+        mock_info.pipeline_tag = "reinforcement-learning"
+        self.assertTrue(filters.is_robotics_but_keep_vqa(mock_info, [], None))
+
+    def test_is_robotics_common_words_not_triggering(self):
+        """Test that common ML words like 'control' and 'policy' don't trigger robotics filter."""
+        mock_info = MagicMock()
+        mock_info.pipeline_tag = "text-generation"
+        # These words were removed from robotics keywords as they're too common
+        readme_with_common_words = "This model provides control over generation and follows a policy."
+        self.assertFalse(filters.is_robotics_but_keep_vqa(mock_info, [], readme_with_common_words))
+
+    def test_llm_analysis_contains_robotics(self):
+        """Test secondary filter for robotics terms in LLM-generated content."""
+        # Test with robotics content
+        robotics_analysis = {
+            "newsletter_blurb": "Dieses Modell ist für Robotik-Steuerung geeignet.",
+            "key_facts": ["Trainiert für Roboterarm-Bewegungen"],
+            "delta": {"what_changed": [], "why_it_matters": []},
+            "manufacturing": {"use_cases": ["Roboter-Steuerung"]}
+        }
+        self.assertTrue(filters.llm_analysis_contains_robotics(robotics_analysis))
+
+        # Test without robotics content
+        non_robotics_analysis = {
+            "newsletter_blurb": "Ein Sprachmodell für Text-Generierung.",
+            "key_facts": ["Unterstützt mehrere Sprachen"],
+            "delta": {"what_changed": [], "why_it_matters": []},
+            "manufacturing": {"use_cases": ["Dokumentenanalyse"]}
+        }
+        self.assertFalse(filters.llm_analysis_contains_robotics(non_robotics_analysis))
+
+        # Test with None
+        self.assertFalse(filters.llm_analysis_contains_robotics(None))
+
+        # Test with empty dict
+        self.assertFalse(filters.llm_analysis_contains_robotics({}))
+
     def test_is_export_or_conversion(self):
         self.assertTrue(filters.is_export_or_conversion("model-gguf", ["gguf"], []))
         self.assertFalse(filters.is_export_or_conversion("model-base", [], []))
