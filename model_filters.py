@@ -7,6 +7,8 @@ from typing import Optional, Any
 from urllib.parse import urlparse
 
 # Keywords - Only robotics-specific terms that are unlikely to appear in non-robotics contexts
+# Note: Both "reinforcement learning" (space) and "reinforcement-learning" (hyphen) are needed
+# because tags and README text may contain either form, and tag matching is exact (not substring)
 ROBOTICS_KEYWORDS = [
     "robot", "robotics", "robotik", "roboter", "manipulation", "rl", "reinforcement learning",
     "reinforcement-learning", "sim2real", "lidar", "slam", "ros", "ros2",
@@ -94,6 +96,16 @@ def llm_analysis_contains_robotics(llm_analysis: dict | None) -> bool:
     
     This is a secondary filter to catch robotics models that may have escaped
     the initial README-based filter but whose LLM analysis reveals robotics content.
+    
+    Args:
+        llm_analysis: Dictionary containing LLM analysis results with optional keys:
+            - newsletter_blurb (str): Brief model description
+            - key_facts (list[str]): List of key facts about the model
+            - delta (dict): Contains 'what_changed' and 'why_it_matters' lists
+            - manufacturing (dict): Contains 'use_cases' list
+    
+    Returns:
+        True if any robotics keywords are found in the analysis content.
     """
     if not llm_analysis:
         return False
