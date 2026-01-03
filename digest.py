@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 try:
     from zoneinfo import ZoneInfo
@@ -100,7 +100,7 @@ def dispatch_digests(
     reporter: Reporter,
     mailer: Mailer,
     date_str: str,
-    processed_models_current_run: Optional[List[Dict]] = None,
+    processed_models_current_run: Optional[List[Dict[str, Any]]] = None,
     force_send: bool = False,
 ) -> int:
     """

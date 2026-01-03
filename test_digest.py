@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 import tempfile
 import os
 
+import dateutil.parser
+
 from config import NewsletterSubscriber, get_newsletter_subscribers, _parse_subscribers_json
 from digest import (
     get_current_day_name,
@@ -226,7 +228,6 @@ class TestDatabaseProcessedAt(unittest.TestCase):
             
             self.assertIsNotNone(row["processed_at"])
             # Check timestamp is reasonable (between before and after)
-            import dateutil.parser
             processed_at = dateutil.parser.parse(row["processed_at"])
             self.assertGreaterEqual(processed_at, before)
             self.assertLessEqual(processed_at, after)
