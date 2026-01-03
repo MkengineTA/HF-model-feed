@@ -93,6 +93,22 @@ class RunStats:
         if len(self.skip_items) < 80:
             self.skip_items.append(SkipItem(model_id=model_id, reason=reason, author=author, extra=extra))
 
+    def prolific_skipped_uploaders(self, reason: str, min_count: int) -> set[str]:
+        results: set[str] = set()
+        if not reason or min_count <= 0:
+            return results
+
+        for uploader, counter in self.skip_reasons_by_uploader.items():
+            count = counter.get(reason, 0)
+            if count < min_count:
+                continue
+            top_count = max(counter.values())
+            # Only add if this reason is tied for the uploader's most common skip cause.
+            if count == top_count:
+                results.add(uploader)
+
+        return results
+
     def top_skip_reasons(self, n: int = 12) -> List[Tuple[str, int]]:
         return self.skip_reasons.most_common(n)
 

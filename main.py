@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import yaml
 import dateutil.parser
 import unicodedata
@@ -18,7 +18,7 @@ from llm_client import LLMClient
 from reporter import Reporter
 from mailer import Mailer
 import model_filters as filters
-from namespace_policy import classify_namespace
+import namespace_policy
 from run_stats import RunStats
 from param_estimator import estimate_parameters, security_warnings
 
@@ -65,6 +65,57 @@ def quote_in_readme(quote: str, readme: str) -> bool:
     r2 = r.translate(trans)
     return q2 in r2
 
+def tree_has_readme(file_details) -> bool:
+    if not isinstance(file_details, list):
+        return False
+    for item in file_details:
+        path = (item.get("path") or "").strip().lower()
+        if not path:
+            continue
+        if path.endswith("readme.md") or path.endswith("modelcard.md"):
+            return True
+        leaf = path.split("/")[-1]
+        if leaf.startswith("readme"):
+            return True
+    return False
+
+
+def apply_dynamic_blacklist(db: Database, stats: RunStats, dry_run: bool) -> None:
+    if dry_run:
+        return
+
+    reason = "skip:no_readme"
+    threshold = config.DYNAMIC_BLACKLIST_NO_README_MIN
+    prolific = stats.prolific_skipped_uploaders(reason, threshold)
+    whitelist_snapshot = namespace_policy.get_whitelist()
+    base_blacklist_snapshot = namespace_policy.get_base_blacklist()
+
+    additions: dict[str, int] = {}
+    for uploader in prolific:
+        normalized = namespace_policy.normalize_namespace(uploader)
+        if not normalized:
+            continue
+        if normalized in whitelist_snapshot or normalized in base_blacklist_snapshot:
+            continue
+        additions[normalized] = stats.skip_reasons_by_uploader[uploader][reason]
+
+    if not additions:
+        return
+
+    existing_dynamic = db.get_dynamic_blacklist()
+    new_additions = {ns: cnt for ns, cnt in additions.items() if ns not in existing_dynamic}
+
+    # Persist (table-based) + refresh in-memory policy
+    db.upsert_dynamic_blacklist(additions, reason=reason)
+
+    combined = existing_dynamic | set(additions.keys())
+    namespace_policy.set_dynamic_blacklist(combined)
+
+    if new_additions:
+        logger.info(
+            f"Dynamic blacklist updated with {len(new_additions)} uploader(s): {sorted(new_additions)}"
+        )
+
 
 def should_block_model_name(
     model_name: str,
@@ -97,6 +148,18 @@ def main():
     parser.add_argument("--limit", type=int, default=1000, help="Safety limit for API fetching (default: 1000)")
     parser.add_argument("--dry-run", action="store_true", help="Do not save to DB")
     parser.add_argument("--force-email", action="store_true", help="Send email even in dry-run mode")
+    parser.add_argument(
+        "--prune-dynamic-blacklist-days",
+        type=int,
+        default=None,
+        help="Prune dynamic blacklist entries whose last_seen is older than N days",
+    )
+    parser.add_argument(
+        "--remove-dynamic-blacklist",
+        type=str,
+        default="",
+        help="Comma-separated namespaces to remove from the dynamic blacklist",
+    )
     args = parser.parse_args()
 
     stats = RunStats()
@@ -104,7 +167,26 @@ def main():
     date_str = current_run_time.strftime("%Y-%m-%d")
 
     db = Database(config.DB_PATH)
+    dynamic_blacklist = db.get_dynamic_blacklist()
+    if dynamic_blacklist:
+        namespace_policy.set_dynamic_blacklist(dynamic_blacklist)
     hf_client = HFClient(token=config.HF_TOKEN)
+
+    if args.prune_dynamic_blacklist_days and args.prune_dynamic_blacklist_days > 0:
+        cutoff = current_run_time - timedelta(days=args.prune_dynamic_blacklist_days)
+        removed = db.prune_dynamic_blacklist(cutoff)
+        if removed:
+            logger.info(f"Pruned {len(removed)} dynamic blacklist entries older than {args.prune_dynamic_blacklist_days} days.")
+        remaining = db.get_dynamic_blacklist()
+        namespace_policy.set_dynamic_blacklist(remaining)
+
+    if args.remove_dynamic_blacklist:
+        to_remove = {namespace_policy.normalize_namespace(x) for x in args.remove_dynamic_blacklist.split(",") if x.strip()}
+        if to_remove:
+            db.remove_dynamic_blacklist(to_remove)
+            remaining = db.get_dynamic_blacklist()
+            namespace_policy.set_dynamic_blacklist(remaining)
+            logger.info(f"Removed {len(to_remove)} namespace(s) from dynamic blacklist: {sorted(to_remove)}")
 
     llm_client = LLMClient(
         api_url=config.LLM_API_URL,
@@ -198,7 +280,7 @@ def main():
 
         # ✅ Fix 2: niemals den ganzen Run durch einen Einzel-Fehler killen
         try:
-            decision, ns_reason = classify_namespace(uploader)
+            decision, ns_reason = namespace_policy.classify_namespace(uploader)
             is_whitelisted = (decision == "allow_whitelist")
 
             if decision == "deny_blacklist":
@@ -331,7 +413,13 @@ def main():
             # ---- Phase 1: README ----
             readme_content = hf_client.get_model_readme(model_id)
             if not readme_content:
-                skip(model_id, uploader, "skip:no_readme")
+                has_tree = isinstance(file_details, list)
+                has_readme_candidate = tree_has_readme(file_details)
+                if has_readme_candidate or not has_tree:
+                    stats.record_warn(model_id, "warn:readme_fetch_failed", author=uploader)
+                    skip(model_id, uploader, "skip:readme_fetch_failed")
+                else:
+                    skip(model_id, uploader, "skip:no_readme")
                 continue
 
             if filters.is_empty_or_stub_readme(readme_content):
@@ -510,6 +598,8 @@ def main():
             logger.exception(f"Unhandled error while processing {model_id}: {e}")
             skip(model_id, uploader, "skip:exception", error=str(e))
             continue
+
+    apply_dynamic_blacklist(db, stats, args.dry_run)
 
     if processed_models or stats.skipped > 0 or stats.warned > 0:
         logger.info(f"Generating reports for {len(processed_models)} processed models...")

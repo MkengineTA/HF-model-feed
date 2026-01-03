@@ -67,6 +67,18 @@ class Database:
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS dynamic_blacklist (
+                namespace TEXT PRIMARY KEY,
+                added_at TIMESTAMP NOT NULL,
+                reason TEXT,
+                count INTEGER DEFAULT 0,
+                last_seen TIMESTAMP NOT NULL
+            )
+            """
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS authors (
                 namespace TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -123,6 +135,102 @@ class Database:
             (timestamp.isoformat(),),
         )
         conn.commit()
+
+    def _migrate_dynamic_blacklist_metadata(self) -> set[str]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'dynamic_blacklist'")
+        row = cursor.fetchone()
+        if row and row["value"]:
+            try:
+                data = json.loads(row["value"])
+                if not isinstance(data, (list, tuple, set)):
+                    logger.warning("Dynamic blacklist metadata is not a list; resetting.")
+                    return set()
+                namespaces = {str(x) for x in data if str(x).strip()}
+                if namespaces:
+                    now = datetime.now(timezone.utc).isoformat()
+                    for ns in namespaces:
+                        cursor.execute(
+                            """
+                            INSERT OR IGNORE INTO dynamic_blacklist (namespace, added_at, reason, count, last_seen)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (ns, now, "legacy_metadata", 0, now),
+                        )
+                    conn.commit()
+                return namespaces
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse dynamic blacklist from metadata; resetting. Error: %s",
+                    e,
+                    exc_info=True,
+                )
+        return set()
+
+    def get_dynamic_blacklist(self) -> set[str]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT namespace FROM dynamic_blacklist")
+        rows = cursor.fetchall()
+        if rows:
+            return {row["namespace"] for row in rows}
+        return self._migrate_dynamic_blacklist_metadata()
+
+    def upsert_dynamic_blacklist(self, additions: dict[str, int], reason: str) -> None:
+        if not additions:
+            return
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        for ns, count in additions.items():
+            if not ns:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO dynamic_blacklist (namespace, added_at, reason, count, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(namespace) DO UPDATE SET
+                    reason=excluded.reason,
+                    count=MAX(dynamic_blacklist.count, excluded.count),
+                    last_seen=excluded.last_seen,
+                    added_at=COALESCE(dynamic_blacklist.added_at, excluded.added_at)
+                """,
+                (ns, now, reason, int(count or 0), now),
+            )
+        conn.commit()
+
+    def prune_dynamic_blacklist(self, cutoff_dt: datetime) -> set[str]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT namespace FROM dynamic_blacklist WHERE last_seen < ?",
+            (cutoff_dt.isoformat(),),
+        )
+        rows = cursor.fetchall()
+        to_remove = {row["namespace"] for row in rows}
+        if to_remove:
+            cursor.execute(
+                "DELETE FROM dynamic_blacklist WHERE last_seen < ?",
+                (cutoff_dt.isoformat(),),
+            )
+            conn.commit()
+        return to_remove
+
+    def remove_dynamic_blacklist(self, namespaces: set[str]) -> set[str]:
+        if not namespaces:
+            return set()
+        ns_list = sorted({n for n in namespaces if n})
+        if not ns_list:
+            return set()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"DELETE FROM dynamic_blacklist WHERE namespace IN ({','.join('?' for _ in ns_list)})",
+            tuple(ns_list),
+        )
+        conn.commit()
+        return set(ns_list)
 
     def get_author(self, namespace: str):
         conn = self.get_connection()
