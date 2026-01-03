@@ -298,6 +298,14 @@ class TestFilters(unittest.TestCase):
         )
         self.assertEqual(result["level"], "strong")
         self.assertEqual(result["format"], "gptq")
+        
+        # REGRESSION TEST: Mismatched corroboration should NOT upgrade to strong
+        # gptq_config.json + repo name with -awq should remain suspected (not strong)
+        result = filters.classify_export_conversion_evidence(
+            "user/model-awq", [], [{"path": "gptq_config.json"}]
+        )
+        self.assertEqual(result["level"], "suspected")
+        self.assertEqual(result["format"], "gptq")  # Format from config, not from name
 
     def test_classify_export_conversion_evidence_name_only_suspected(self):
         """Test that export format name markers produce suspected evidence (not strong)."""

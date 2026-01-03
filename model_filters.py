@@ -254,8 +254,6 @@ def classify_export_conversion_evidence(
     # These are handled silently - no suspected level, no warnings
     
     return result
-    
-    return result
 
 UNSLOTH_TEMPLATE_MARKERS = [
     "this llama model was trained 2x faster with unsloth",
