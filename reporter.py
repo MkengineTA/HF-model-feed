@@ -7,6 +7,7 @@ from typing import Optional, Any, Dict, List
 from collections import Counter
 import csv
 import os
+import math
 
 import config
 from run_stats import RunStats
@@ -18,6 +19,35 @@ class Reporter:
     @staticmethod
     def _escape_underscores(text: str) -> str:
         return text.replace("_", r"\_") if text else text
+
+    @staticmethod
+    def _format_params_b(value: Optional[float]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if val <= 0:
+            return "0M"
+
+        if val < 1:
+            rounded_b = math.floor(val * 100 + 0.5) / 100
+            if rounded_b >= 1.0:
+                # Handle values that round up to 1.0B (e.g. 0.995B -> 1.00B)
+                return "1.0B"
+            millions = int(round(rounded_b * 1000))
+            return f"{millions}M"
+
+        if val < 2:
+            rounded = math.floor(val * 10 + 0.5) / 10
+            if rounded >= 2.0:
+                # If rounding pushes us to 2.0B, format as whole billions per requirements
+                return f"{int(round(rounded))}B"
+            return f"{rounded:.1f}B"
+
+        return f"{int(round(val))}B"
 
     def write_markdown_report(
         self,
@@ -141,15 +171,15 @@ class Reporter:
                 mtype = a.get("model_type", "N/A")
 
                 # Params: show total + active if available
-                total_b = m.get("params_total_b")
-                active_b = m.get("params_active_b")
+                total_b = self._format_params_b(m.get("params_total_b"))
+                active_b = self._format_params_b(m.get("params_active_b"))
                 src = m.get("params_source") or "unknown"
                 if total_b is None and active_b is None:
                     params_str = "Unknown"
                 elif total_b is not None and active_b is not None:
-                    params_str = f"total={total_b}B, active={active_b}B ({src})"
+                    params_str = f"total={total_b}, active={active_b} ({src})"
                 else:
-                    params_str = f"{total_b or active_b}B ({src})"
+                    params_str = f"{total_b or active_b} ({src})"
 
                 kind_str = m.get("author_kind", "unknown")
                 tier_str = f"Tier {m.get('trust_tier', '?')}"
