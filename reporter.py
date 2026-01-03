@@ -19,6 +19,27 @@ class Reporter:
     def _escape_underscores(text: str) -> str:
         return text.replace("_", r"\_") if text else text
 
+    @staticmethod
+    def _format_params_b(value: Optional[float]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if val < 1:
+            rounded_b = round(val, 2)
+            millions = round(rounded_b * 1000)
+            return f"{int(millions)}M"
+
+        if val < 2:
+            rounded = round(val, 1)
+            rounded_str = f"{rounded:.1f}".rstrip("0").rstrip(".")
+            return f"{rounded_str}B"
+
+        return f"{int(round(val))}B"
+
     def write_markdown_report(
         self,
         stats: RunStats,
@@ -141,15 +162,15 @@ class Reporter:
                 mtype = a.get("model_type", "N/A")
 
                 # Params: show total + active if available
-                total_b = m.get("params_total_b")
-                active_b = m.get("params_active_b")
+                total_b = self._format_params_b(m.get("params_total_b"))
+                active_b = self._format_params_b(m.get("params_active_b"))
                 src = m.get("params_source") or "unknown"
                 if total_b is None and active_b is None:
                     params_str = "Unknown"
                 elif total_b is not None and active_b is not None:
-                    params_str = f"total={total_b}B, active={active_b}B ({src})"
+                    params_str = f"total={total_b}, active={active_b} ({src})"
                 else:
-                    params_str = f"{total_b or active_b}B ({src})"
+                    params_str = f"{total_b or active_b} ({src})"
 
                 kind_str = m.get("author_kind", "unknown")
                 tier_str = f"Tier {m.get('trust_tier', '?')}"

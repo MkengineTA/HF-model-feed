@@ -53,5 +53,34 @@ class TestReporter(unittest.TestCase):
         self.assertNotIn("Unknowns:", content)
 
 
+    def test_params_are_rounded_in_report(self):
+        stats = RunStats()
+        model_large = {
+            "id": "author/large_model",
+            "name": "large_model",
+            "namespace": "author",
+            "params_total_b": 9.343,
+            "params_active_b": 1.244,
+            "params_source": "test_source",
+            "llm_analysis": {"specialist_score": 5},
+        }
+        model_small = {
+            "id": "author/small_model",
+            "name": "small_model",
+            "namespace": "author",
+            "params_active_b": 0.268,
+            "params_source": "alt_source",
+            "llm_analysis": {"specialist_score": 4},
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            reporter = Reporter(output_dir=tmpdir)
+            report_path = reporter.generate_full_report(stats, [model_large, model_small], date_str="2024-01-01")
+            content = Path(report_path).read_text(encoding="utf-8")
+
+        self.assertIn("total=9B, active=1.2B (test_source)", content)
+        self.assertIn("270M (alt_source)", content)
+
+
 if __name__ == "__main__":
     unittest.main()
