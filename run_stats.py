@@ -53,6 +53,9 @@ class RunStats:
     processed_items: List[ModelRef] = field(default_factory=list)
     analyzed_items: List[ModelRef] = field(default_factory=list)
 
+    # Tier 2 whitelist candidates (namespace -> metadata)
+    tier2_candidates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     def record_candidate_batch(self, n: int) -> None:
         self.candidates_total += n
 
@@ -114,6 +117,26 @@ class RunStats:
 
     def top_warn_reasons(self, n: int = 12) -> List[Tuple[str, int]]:
         return self.warn_reasons.most_common(n)
+
+    def record_tier2_candidate(
+        self,
+        namespace: str,
+        followers: Optional[int] = None,
+        is_pro: bool = False,
+        model_id: Optional[str] = None,
+    ) -> None:
+        if namespace not in self.tier2_candidates:
+            self.tier2_candidates[namespace] = {
+                "followers": followers,
+                "is_pro": is_pro,
+                "model_ids": [],
+                "count": 0,
+            }
+        
+        if model_id and model_id not in self.tier2_candidates[namespace]["model_ids"]:
+            self.tier2_candidates[namespace]["model_ids"].append(model_id)
+        
+        self.tier2_candidates[namespace]["count"] += 1
 
     def summary_line(self) -> str:
         dur_s = int((datetime.now(timezone.utc) - self.started_at).total_seconds())

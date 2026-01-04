@@ -104,6 +104,49 @@ class Reporter:
                 top3_str = ", ".join([f"{self._escape_underscores(r)} ({n})" for r, n in top3]) if top3 else ""
                 lines.append(f"- **{self._escape_underscores(uploader)}**: {cnt}" + (f" — top: {top3_str}" if top3_str else ""))
 
+        # Tier 2 whitelist candidates section
+        if config.REPORT_INCLUDE_TIER2_REVIEW and stats.tier2_candidates:
+            lines.append("")
+            lines.append("## Tier 2 whitelist candidates (review)")
+            lines.append("")
+            lines.append("These namespaces are classified as **Tier 2** (strong users with ≥200 followers or PRO status) and are not yet whitelisted. Consider promoting them to the whitelist for reduced friction.")
+            lines.append("")
+            
+            # Sort by count (number of models seen this run), then by followers
+            sorted_candidates = sorted(
+                stats.tier2_candidates.items(),
+                key=lambda x: (x[1]["count"], x[1]["followers"] or 0),
+                reverse=True
+            )
+            
+            max_items = config.TIER2_REVIEW_MAX_ITEMS
+            for namespace, metadata in sorted_candidates[:max_items]:
+                ns_display = self._escape_underscores(namespace)
+                followers = metadata.get("followers")
+                is_pro = metadata.get("is_pro", False)
+                count = metadata.get("count", 0)
+                model_ids = metadata.get("model_ids", [])
+                
+                # Build metadata string
+                meta_parts = []
+                if followers is not None:
+                    meta_parts.append(f"{followers} followers")
+                if is_pro:
+                    meta_parts.append("PRO")
+                meta_str = ", ".join(meta_parts) if meta_parts else "Tier 2 user"
+                
+                # Build example models string (up to 3)
+                examples = []
+                for mid in model_ids[:3]:
+                    mid_display = self._escape_underscores(mid)
+                    examples.append(f"[{mid_display}](https://huggingface.co/{mid})")
+                examples_str = ", ".join(examples) if examples else ""
+                
+                line = f"- **{ns_display}** — {meta_str} — {count} model(s) this run"
+                if examples_str:
+                    line += f" — examples: {examples_str}"
+                lines.append(line)
+
         lines.append("")
         lines.append("## Processed models (overview)")
 

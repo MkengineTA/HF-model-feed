@@ -84,6 +84,10 @@ The core analysis engine uses an LLM (Local or Cloud) acting as a "Strict Analys
 | `SMTP_PASS` | Gmail App Password (not your login password). |
 | `RECEIVER_MAIL` | Destination email address. |
 | `MODEL_NAME_DUPLICATE_BLOCK_LIMIT` | Block further processing of a model name when its occurrence count in a single run reaches this limit (default: `3`; setting it to `3` allows only 2 occurrences to be processed—the 3rd is blocked). |
+| `DYNAMIC_WHITELIST_ENABLE` | Enable dynamic whitelist feature (default: `True`). |
+| `DYNAMIC_WHITELIST_TIER3_AUTOADD` | Auto-add Tier 3 orgs to dynamic whitelist (default: `True`). |
+| `REPORT_INCLUDE_TIER2_REVIEW` | Include Tier 2 review section in newsletter (default: `True`). |
+| `TIER2_REVIEW_MAX_ITEMS` | Max Tier 2 candidates in report (default: `30`). |
 
 ---
 
@@ -112,10 +116,42 @@ Run the scout daily (e.g., at 06:00 AM). It automatically handles incremental up
 ## 🏗 Architecture Details
 
 ### Trust Tiers & Author Detection
-The system caches author metadata (User vs. Organization) to reduce API calls and apply differential filtering:
+The system caches author metadata (User vs. Organization) to apply differential filtering:
 *   **Tier 3 (Trusted Org)**: Organizations detected via `/avatar` endpoint. Quality gates are relaxed (we review "thin" READMEs from trusted orgs).
 *   **Tier 2 (Strong User)**: Users with >200 followers or PRO status.
 *   **Tier 1 (Normal User)**: Strict quality gates apply.
+
+### Dynamic Whitelist
+The system automatically maintains a **dynamic whitelist** of trusted namespaces:
+
+*   **Auto-Whitelisting**: Tier 3 (Organization) namespaces are **automatically added** to the dynamic whitelist on first encounter. They benefit from relaxed quality gates consistently across all future runs.
+*   **Tier 2 Review**: Strong users (Tier 2) are collected during each run and listed in a dedicated **"Tier 2 whitelist candidates"** section in the newsletter. This enables manual review and promotion to the whitelist.
+*   **Blacklist Priority**: Namespaces in the blacklist (static or dynamic) are **never whitelisted**—blacklist always wins.
+*   **Persistence**: Dynamic whitelist entries are stored in the SQLite database (`dynamic_whitelist` table) and persist across runs.
+
+#### Configuration
+Control the dynamic whitelist feature via `.env`:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DYNAMIC_WHITELIST_ENABLE` | `True` | Enable/disable the dynamic whitelist feature. |
+| `DYNAMIC_WHITELIST_TIER3_AUTOADD` | `True` | Auto-add Tier 3 orgs to dynamic whitelist. |
+| `REPORT_INCLUDE_TIER2_REVIEW` | `True` | Include Tier 2 candidates in newsletter. |
+| `TIER2_REVIEW_MAX_ITEMS` | `30` | Maximum Tier 2 candidates to show in report. |
+
+#### CLI Management
+Manage the dynamic whitelist directly via command-line:
+
+```bash
+# Promote namespaces to whitelist
+python main.py --promote-whitelist "namespace1,namespace2"
+
+# Remove namespaces from whitelist
+python main.py --remove-dynamic-whitelist "namespace1,namespace2"
+
+# Prune old entries (>N days since last seen)
+python main.py --prune-dynamic-whitelist-days 90
+```
 
 ### Caching Strategy
 *   **Author Cache**: Stores namespace types (Org/User) for 14 days. 'Unknown' status (404) is NOT cached to allow immediate re-validation if an account is created.
