@@ -203,15 +203,17 @@ def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> An
     """
     Extract value for specified language from bilingual field.
     
-    Handles both legacy (monolingual) and new (bilingual) formats:
+    Handles both legacy (monolingual) and new (bilingual) formats at the top level:
     - Legacy: "string" or ["list", "items"] -> returned as-is
     - Bilingual: {"de": ..., "en": ...} -> returns value for lang
     
-    If value is a dict with language keys, return the value for lang.
+    If value is a dict with language keys ("de" or "en"), return the value for lang.
     If lang is not present, try fallback_lang.
     If neither, return the value as-is (legacy format).
     
-    Also handles nested bilingual values safely.
+    Note: This function does NOT recursively process nested structures.
+    Nested bilingual fields (e.g., within delta.what_changed) must be
+    extracted individually by calling this function on each nested field.
     """
     if value is None:
         return None
@@ -236,6 +238,9 @@ def pick_lang(value: Any, lang: str, fallback_lang: str = "de") -> Any:
     
     Consistently extracts the correct language from bilingual fields,
     handling both old (monolingual) and new (bilingual) record formats.
+    
+    Note: Does not recursively process nested structures. Call on each
+    bilingual field individually.
     """
     return _get_bilingual_value(value, lang, fallback_lang)
 

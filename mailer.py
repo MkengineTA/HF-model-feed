@@ -181,21 +181,33 @@ class Mailer:
 
             logger.info("Connecting to SMTP server...")
             context = ssl.create_default_context()
+            sent_count = 0
+            failed_count = 0
+            
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls(context=context)
                 server.login(self.user, self.password)
                 
                 # Send individual emails to each recipient to avoid leaking addresses
                 for recipient in to_list:
-                    message = MIMEMultipart("alternative")
-                    message["Subject"] = subject
-                    message["From"] = self.user
-                    message["To"] = recipient
-                    message.attach(MIMEText(html_content, "html"))
-                    
-                    server.sendmail(self.user, [recipient], message.as_string())
+                    try:
+                        message = MIMEMultipart("alternative")
+                        message["Subject"] = subject
+                        message["From"] = self.user
+                        message["To"] = recipient
+                        message.attach(MIMEText(html_content, "html"))
+                        
+                        server.sendmail(self.user, [recipient], message.as_string())
+                        sent_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to send email to {recipient}: {e}")
+                        failed_count += 1
 
-            logger.info(f"Email sent successfully to {len(to_list)} recipient(s)")
+            # Log summary
+            if failed_count > 0:
+                logger.warning(f"Email dispatch: sent {sent_count} / failed {failed_count}")
+            else:
+                logger.info(f"Email sent successfully to {sent_count} recipient(s)")
 
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error(f"Failed to send email (connection/auth error): {e}")

@@ -304,14 +304,16 @@ class TestProcessedAtFormat(unittest.TestCase):
             cursor.execute("SELECT processed_at FROM models WHERE id = ?", ("test/model",))
             row = cursor.fetchone()
             
-            # Should be ISO format with T separator and timezone
+            # Should be ISO format with T separator
             processed_at_str = row["processed_at"]
             self.assertIn("T", processed_at_str)  # ISO format uses T
-            self.assertIn("+", processed_at_str)  # Has timezone
             
-            # Should be parseable and roundtrip correctly
+            # Should be parseable and have timezone info
+            # Note: We use dateutil.parser which handles various ISO formats including Z suffix
             parsed = dateutil.parser.parse(processed_at_str)
             self.assertIsNotNone(parsed.tzinfo)
+            # Verify it has a valid UTC offset (not None)
+            self.assertIsNotNone(parsed.utcoffset())
             
             db.close()
 
