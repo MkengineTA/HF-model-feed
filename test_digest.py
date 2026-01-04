@@ -309,7 +309,7 @@ class TestProcessedAtFormat(unittest.TestCase):
             self.assertIn("T", processed_at_str)  # ISO format uses T
             
             # Should be parseable and have timezone info
-            # Note: We use dateutil.parser which handles various ISO formats including Z suffix
+            # Note: We use dateutil.parser which handles various ISO formats including the Z suffix
             parsed = dateutil.parser.parse(processed_at_str)
             self.assertIsNotNone(parsed.tzinfo)
             # Verify it has a valid UTC offset (not None)

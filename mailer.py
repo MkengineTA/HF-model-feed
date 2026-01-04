@@ -204,10 +204,8 @@ class Mailer:
                         failed_count += 1
 
             # Log summary
-            if failed_count > 0:
-                logger.warning(f"Email dispatch: sent {sent_count} / failed {failed_count}")
-            else:
-                logger.info(f"Email sent successfully to {sent_count} recipient(s)")
+            log_level = logging.WARNING if failed_count > 0 else logging.INFO
+            logger.log(log_level, f"Email dispatch complete: sent {sent_count}, failed {failed_count}")
 
         except Exception as e:
             logger.error(f"Failed to send email (connection/auth error): {e}")
