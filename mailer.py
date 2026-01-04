@@ -151,6 +151,8 @@ class Mailer:
         """
         Send report to one or more recipients.
         
+        Each recipient receives an individual email to avoid exposing addresses.
+        
         Args:
             markdown_content: Markdown content of the report
             date_str: Date string for the report
@@ -177,21 +179,23 @@ class Mailer:
             subject_template = EMAIL_SUBJECTS.get(language, EMAIL_SUBJECTS["en"])
             subject = subject_template.format(date=date_str)
 
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = self.user
-            message["To"] = ", ".join(to_list)
-
-            message.attach(MIMEText(html_content, "html"))
-
             logger.info("Connecting to SMTP server...")
             context = ssl.create_default_context()
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls(context=context)
                 server.login(self.user, self.password)
-                server.sendmail(self.user, to_list, message.as_string())
+                
+                # Send individual emails to each recipient to avoid leaking addresses
+                for recipient in to_list:
+                    message = MIMEMultipart("alternative")
+                    message["Subject"] = subject
+                    message["From"] = self.user
+                    message["To"] = recipient
+                    message.attach(MIMEText(html_content, "html"))
+                    
+                    server.sendmail(self.user, [recipient], message.as_string())
 
-            logger.info(f"Email sent successfully to {', '.join(to_list)}")
+            logger.info(f"Email sent successfully to {len(to_list)} recipient(s)")
 
         except Exception as e:
             logger.error(f"Failed to send email: {e}")

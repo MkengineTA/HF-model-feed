@@ -174,6 +174,22 @@ LOCALIZED_STRINGS: Dict[str, Dict[str, str]] = {
         "de": "Stufe",
         "en": "Tier",
     },
+    "window_stats_header": {
+        "de": "Digest-Statistiken",
+        "en": "Digest Statistics",
+    },
+    "models_in_window": {
+        "de": "Modelle im Zeitfenster",
+        "en": "Models in window",
+    },
+    "window_hours": {
+        "de": "Zeitfenster (Stunden)",
+        "en": "Window (hours)",
+    },
+    "run_diagnostics": {
+        "de": "Lauf-Diagnose (heute)",
+        "en": "Run diagnostics (today)",
+    },
 }
 
 
@@ -187,10 +203,20 @@ def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> An
     """
     Extract value for specified language from bilingual field.
     
+    Handles both legacy (monolingual) and new (bilingual) formats:
+    - Legacy: "string" or ["list", "items"] -> returned as-is
+    - Bilingual: {"de": ..., "en": ...} -> returns value for lang
+    
     If value is a dict with language keys, return the value for lang.
     If lang is not present, try fallback_lang.
     If neither, return the value as-is (legacy format).
+    
+    Also handles nested bilingual values safely.
     """
+    if value is None:
+        return None
+    
+    # Check if it's a bilingual dict (has language keys)
     if isinstance(value, dict) and ("de" in value or "en" in value):
         if lang in value:
             return value[lang]
@@ -199,8 +225,19 @@ def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> An
         # Return first available
         for v in value.values():
             return v
+    
+    # Legacy format - return as-is (string, list, etc.)
     return value
 
+
+def pick_lang(value: Any, lang: str, fallback_lang: str = "de") -> Any:
+    """
+    Alias for _get_bilingual_value for external use.
+    
+    Consistently extracts the correct language from bilingual fields,
+    handling both old (monolingual) and new (bilingual) record formats.
+    """
+    return _get_bilingual_value(value, lang, fallback_lang)
 
 class Reporter:
     def __init__(self, output_dir: str = "."):
@@ -246,6 +283,7 @@ class Reporter:
         date_str: Optional[str] = None,
         language: str = "de",
         report_type: Literal["debug", "normal"] = "debug",
+        window_hours: Optional[int] = None,
     ) -> Path:
         out = Path(self.output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -260,17 +298,42 @@ class Reporter:
         lines.append(f"# {_l('report_title', language)} ({date_str})")
         lines.append("")
 
-        lines.append(f"## {_l('summary', language)}")
-        lines.append(f"- {_l('discovered_unique', language)}: **{stats.candidates_total}**")
-        lines.append(f"- {_l('queued_new_updated', language)}: **{stats.queued}**")
-        lines.append(f"- {_l('noop_unchanged', language)}: **{stats.noop_unchanged}**")
-        lines.append(f"- {_l('included_in_report', language)}: **{stats.processed}**")
-        lines.append(f"- {_l('skipped', language)}: **{stats.skipped}**")
-        lines.append(f"- {_l('warnings', language)}: **{stats.warned}**")
-        lines.append(f"- {_l('llm_attempted', language)}: **{stats.llm_analyzed}**")
-        lines.append(f"- {_l('llm_succeeded', language)}: **{stats.llm_succeeded}**")
-        lines.append(f"- {_l('llm_failed', language)}: **{stats.llm_failed}**")
-        lines.append("")
+        # For window-based digests (non-24h), show window-centric stats instead of run stats
+        is_window_digest = window_hours is not None and window_hours != 24
+        
+        if is_window_digest:
+            # Window-centric stats for longer-window digests
+            lines.append(f"## {_l('window_stats_header', language)}")
+            lines.append(f"- {_l('window_hours', language)}: **{window_hours}**")
+            lines.append(f"- {_l('models_in_window', language)}: **{len(processed_models or [])}**")
+            lines.append("")
+            
+            # Show run diagnostics only for debug recipients, clearly labeled
+            if report_type == "debug":
+                lines.append(f"### {_l('run_diagnostics', language)}")
+                lines.append(f"- {_l('discovered_unique', language)}: **{stats.candidates_total}**")
+                lines.append(f"- {_l('queued_new_updated', language)}: **{stats.queued}**")
+                lines.append(f"- {_l('noop_unchanged', language)}: **{stats.noop_unchanged}**")
+                lines.append(f"- {_l('included_in_report', language)}: **{stats.processed}**")
+                lines.append(f"- {_l('skipped', language)}: **{stats.skipped}**")
+                lines.append(f"- {_l('warnings', language)}: **{stats.warned}**")
+                lines.append(f"- {_l('llm_attempted', language)}: **{stats.llm_analyzed}**")
+                lines.append(f"- {_l('llm_succeeded', language)}: **{stats.llm_succeeded}**")
+                lines.append(f"- {_l('llm_failed', language)}: **{stats.llm_failed}**")
+                lines.append("")
+        else:
+            # Standard summary for 24h or unspecified window
+            lines.append(f"## {_l('summary', language)}")
+            lines.append(f"- {_l('discovered_unique', language)}: **{stats.candidates_total}**")
+            lines.append(f"- {_l('queued_new_updated', language)}: **{stats.queued}**")
+            lines.append(f"- {_l('noop_unchanged', language)}: **{stats.noop_unchanged}**")
+            lines.append(f"- {_l('included_in_report', language)}: **{len(processed_models or [])}**")
+            lines.append(f"- {_l('skipped', language)}: **{stats.skipped}**")
+            lines.append(f"- {_l('warnings', language)}: **{stats.warned}**")
+            lines.append(f"- {_l('llm_attempted', language)}: **{stats.llm_analyzed}**")
+            lines.append(f"- {_l('llm_succeeded', language)}: **{stats.llm_succeeded}**")
+            lines.append(f"- {_l('llm_failed', language)}: **{stats.llm_failed}**")
+            lines.append("")
 
         # Debug sections: only show for debug report type
         if report_type == "debug":
@@ -342,6 +405,7 @@ class Reporter:
         date_str: Optional[str] = None,
         language: str = "de",
         report_type: Literal["debug", "normal"] = "debug",
+        window_hours: Optional[int] = None,
     ) -> Path:
         path = self.write_markdown_report(
             stats,
@@ -349,6 +413,7 @@ class Reporter:
             date_str=date_str,
             language=language,
             report_type=report_type,
+            window_hours=window_hours,
         )
         base_content = path.read_text(encoding="utf-8")
 

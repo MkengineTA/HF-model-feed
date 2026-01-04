@@ -94,6 +94,14 @@ class Database:
             """
         )
 
+        # Create index on processed_at for efficient window queries
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_models_processed_at
+            ON models(processed_at)
+            """
+        )
+
         conn.commit()
 
     def _ensure_column(self, cursor, table: str, column: str, col_type: str) -> None:

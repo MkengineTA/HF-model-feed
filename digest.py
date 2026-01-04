@@ -176,6 +176,7 @@ def dispatch_digests(
                 date_str=date_str,
                 language=language,
                 report_type=report_type,
+                window_hours=window_hours,
             )
             
             md_content = report_path.read_text(encoding="utf-8")
