@@ -84,17 +84,19 @@ def classify_namespace(ns: str) -> Tuple[str, Optional[str]]:
       - "allow"  -> proceed
       - "allow_whitelist" -> proceed, whitelisted
       - "deny_blacklist"  -> skip
+    
+    Note: Blacklist wins if a namespace is in both blacklist and whitelist.
     """
     key = normalize_namespace(ns)
+
+    # Check blacklist FIRST (blacklist wins over whitelist)
+    with _BLACKLIST_LOCK:
+        if key in BLACKLIST:
+            return ("deny_blacklist", "skip:blacklisted_namespace")
 
     # Check whitelist (base + dynamic)
     with _WHITELIST_LOCK:
         if key in WHITELIST:
             return ("allow_whitelist", "allow:whitelisted_namespace")
-
-    # Check blacklist (base + dynamic)
-    with _BLACKLIST_LOCK:
-        if key in BLACKLIST:
-            return ("deny_blacklist", "skip:blacklisted_namespace")
 
     return ("allow", None)
