@@ -172,3 +172,9 @@ WHITELIST_NAMESPACES |= _parse_csv_set(os.getenv("HF_WHITELIST"))
 
 # --- Dynamic blacklist thresholds ---
 DYNAMIC_BLACKLIST_NO_README_MIN = int(os.getenv("DYNAMIC_BLACKLIST_NO_README_MIN", "20"))
+
+# --- Dynamic whitelist configuration ---
+DYNAMIC_WHITELIST_ENABLE = os.getenv("DYNAMIC_WHITELIST_ENABLE", "True").lower() == "true"
+DYNAMIC_WHITELIST_TIER3_AUTOADD = os.getenv("DYNAMIC_WHITELIST_TIER3_AUTOADD", "True").lower() == "true"
+REPORT_INCLUDE_TIER2_REVIEW = os.getenv("REPORT_INCLUDE_TIER2_REVIEW", "True").lower() == "true"
+TIER2_REVIEW_MAX_ITEMS = int(os.getenv("TIER2_REVIEW_MAX_ITEMS", "30"))

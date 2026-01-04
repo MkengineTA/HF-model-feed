@@ -160,6 +160,24 @@ def main():
         default="",
         help="Comma-separated namespaces to remove from the dynamic blacklist",
     )
+    parser.add_argument(
+        "--prune-dynamic-whitelist-days",
+        type=int,
+        default=None,
+        help="Prune dynamic whitelist entries whose last_seen is older than N days",
+    )
+    parser.add_argument(
+        "--remove-dynamic-whitelist",
+        type=str,
+        default="",
+        help="Comma-separated namespaces to remove from the dynamic whitelist",
+    )
+    parser.add_argument(
+        "--promote-whitelist",
+        type=str,
+        default="",
+        help="Comma-separated namespaces to promote to dynamic whitelist",
+    )
     args = parser.parse_args()
 
     stats = RunStats()
@@ -170,6 +188,14 @@ def main():
     dynamic_blacklist = db.get_dynamic_blacklist()
     if dynamic_blacklist:
         namespace_policy.set_dynamic_blacklist(dynamic_blacklist)
+    
+    # Load dynamic whitelist
+    if config.DYNAMIC_WHITELIST_ENABLE:
+        dynamic_whitelist = db.get_dynamic_whitelist()
+        if dynamic_whitelist:
+            namespace_policy.set_dynamic_whitelist(dynamic_whitelist)
+            logger.info(f"Loaded {len(dynamic_whitelist)} namespaces from dynamic whitelist")
+    
     hf_client = HFClient(token=config.HF_TOKEN)
 
     if args.prune_dynamic_blacklist_days and args.prune_dynamic_blacklist_days > 0:
@@ -187,6 +213,33 @@ def main():
             remaining = db.get_dynamic_blacklist()
             namespace_policy.set_dynamic_blacklist(remaining)
             logger.info(f"Removed {len(to_remove)} namespace(s) from dynamic blacklist: {sorted(to_remove)}")
+
+    # Handle dynamic whitelist CLI arguments
+    if config.DYNAMIC_WHITELIST_ENABLE:
+        if args.prune_dynamic_whitelist_days and args.prune_dynamic_whitelist_days > 0:
+            cutoff = current_run_time - timedelta(days=args.prune_dynamic_whitelist_days)
+            removed = db.prune_dynamic_whitelist(cutoff)
+            if removed:
+                logger.info(f"Pruned {len(removed)} dynamic whitelist entries older than {args.prune_dynamic_whitelist_days} days.")
+            remaining = db.get_dynamic_whitelist()
+            namespace_policy.set_dynamic_whitelist(remaining)
+
+        if args.remove_dynamic_whitelist:
+            to_remove = {namespace_policy.normalize_namespace(x) for x in args.remove_dynamic_whitelist.split(",") if x.strip()}
+            if to_remove:
+                db.remove_dynamic_whitelist(to_remove)
+                remaining = db.get_dynamic_whitelist()
+                namespace_policy.set_dynamic_whitelist(remaining)
+                logger.info(f"Removed {len(to_remove)} namespace(s) from dynamic whitelist: {sorted(to_remove)}")
+
+        if args.promote_whitelist:
+            to_promote = {namespace_policy.normalize_namespace(x) for x in args.promote_whitelist.split(",") if x.strip()}
+            if to_promote:
+                additions = {ns: 1 for ns in to_promote}
+                db.upsert_dynamic_whitelist(additions, reason="manual_promotion")
+                remaining = db.get_dynamic_whitelist()
+                namespace_policy.set_dynamic_whitelist(remaining)
+                logger.info(f"Promoted {len(to_promote)} namespace(s) to dynamic whitelist: {sorted(to_promote)}")
 
     llm_client = LLMClient(
         api_url=config.LLM_API_URL,
@@ -364,6 +417,50 @@ def main():
                     author_run_cache[namespace] = (author_kind, auth_data, trust_tier)
 
             logger.info(f"Author: {uploader} | Kind: {author_kind} | Tier: {trust_tier}")
+
+            # Dynamic whitelist: auto-add Tier 3 and track Tier 2 candidates
+            if config.DYNAMIC_WHITELIST_ENABLE and namespace:
+                normalized_ns = namespace_policy.normalize_namespace(namespace)
+                
+                # Auto-add Tier 3 to dynamic whitelist
+                if (
+                    trust_tier == 3
+                    and config.DYNAMIC_WHITELIST_TIER3_AUTOADD
+                    and not is_whitelisted  # Don't re-add already whitelisted
+                ):
+                    # Check if not already in base whitelist or blacklisted
+                    base_whitelist = namespace_policy.BASE_WHITELIST
+                    blacklist = namespace_policy.get_blacklist()
+                    
+                    if normalized_ns not in base_whitelist and normalized_ns not in blacklist:
+                        # Add to dynamic whitelist (will be persisted later if not dry-run)
+                        if not args.dry_run:
+                            db.upsert_dynamic_whitelist({normalized_ns: 1}, reason="tier3_org")
+                            # Update in-memory whitelist immediately
+                            current_dynamic = namespace_policy.get_dynamic_whitelist()
+                            current_dynamic.add(normalized_ns)
+                            namespace_policy.set_dynamic_whitelist(current_dynamic)
+                            logger.info(f"Auto-added Tier 3 namespace to dynamic whitelist: {normalized_ns}")
+                
+                # Track Tier 2 candidates for newsletter
+                elif (
+                    trust_tier == 2
+                    and config.REPORT_INCLUDE_TIER2_REVIEW
+                    and not is_whitelisted
+                ):
+                    # Check if not already in whitelist or blacklisted
+                    whitelist = namespace_policy.get_whitelist()
+                    blacklist = namespace_policy.get_blacklist()
+                    
+                    if normalized_ns not in whitelist and normalized_ns not in blacklist:
+                        followers = auth_data.get("num_followers") if auth_data else None
+                        is_pro = bool(auth_data.get("is_pro")) if auth_data else False
+                        stats.record_tier2_candidate(
+                            namespace=normalized_ns,
+                            followers=followers,
+                            is_pro=is_pro,
+                            model_id=model_id,
+                        )
 
             if trust_tier <= 1:
                 should_block, occurrences = should_block_model_name(
