@@ -119,7 +119,7 @@ class Reporter:
                 reverse=True
             )
             
-            max_items = getattr(config, "TIER2_REVIEW_MAX_ITEMS", 30)
+            max_items = config.TIER2_REVIEW_MAX_ITEMS
             for namespace, metadata in sorted_candidates[:max_items]:
                 ns_display = self._escape_underscores(namespace)
                 followers = metadata.get("followers")

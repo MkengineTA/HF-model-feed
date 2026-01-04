@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Manual integration test for dynamic whitelist feature.
 Tests the full flow without needing HuggingFace API access.

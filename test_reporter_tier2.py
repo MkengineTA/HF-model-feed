@@ -239,7 +239,7 @@ class TestReporterTier2Section(unittest.TestCase):
             )
         
         original_tier2_value = config.REPORT_INCLUDE_TIER2_REVIEW
-        original_max_value = getattr(config, "TIER2_REVIEW_MAX_ITEMS", 30)
+        original_max_value = config.TIER2_REVIEW_MAX_ITEMS
         config.REPORT_INCLUDE_TIER2_REVIEW = True
         config.TIER2_REVIEW_MAX_ITEMS = 10  # Limit to 10
         
@@ -256,7 +256,14 @@ class TestReporterTier2Section(unittest.TestCase):
             # Extract just the tier2 section
             start = content.find("## Tier 2 whitelist candidates")
             end = content.find("## Processed models", start)
-            tier2_section = content[start:end] if start != -1 and end != -1 else content[start:]
+            if start == -1:
+                self.fail("Tier 2 section not found")
+            
+            if end == -1:
+                # Section continues to end of file
+                tier2_section = content[start:]
+            else:
+                tier2_section = content[start:end]
             
             # Count lines starting with "- **user" (indicating a namespace entry)
             user_lines = [line for line in tier2_section.split("\n") if line.strip().startswith("- **user")]
