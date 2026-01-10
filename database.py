@@ -374,7 +374,7 @@ class Database:
                 model["filter_trace"] = []
             
             # Filter by specialist score
-            score = int((model.get("llm_analysis") or {}).get("specialist_score", 0) or 0)
+            score = int((model.get("llm_analysis") or {}).get("specialist_score") or 0)
             if score >= min_specialist_score:
                 models.append(model)
         
