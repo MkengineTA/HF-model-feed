@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
-    from backports.zoneinfo import ZoneInfo  # type: ignore
+    from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # type: ignore
 
 from config import (
     NewsletterSubscriber,
@@ -51,7 +51,7 @@ def get_current_day_name(tz_name: str = "Europe/Berlin") -> str:
     """Get lowercase day name (mon/tue/...) in the specified timezone."""
     try:
         tz = ZoneInfo(tz_name)
-    except Exception:
+    except ZoneInfoNotFoundError:
         logger.warning(f"Invalid timezone '{tz_name}', falling back to UTC")
         tz = timezone.utc
     
