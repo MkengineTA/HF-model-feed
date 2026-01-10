@@ -678,7 +678,7 @@ def main():
                 if emails_sent == 0:
                     logger.info("No emails were sent (no subscribers scheduled or configured).")
             except Exception as e:
-                logger.error(f"Digest dispatch failed: {e}")
+                logger.exception(f"Digest dispatch failed: {e}")
     else:
         logger.info("No candidates processed.")
         logger.info(stats.summary_line())
