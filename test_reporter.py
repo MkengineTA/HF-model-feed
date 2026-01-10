@@ -46,11 +46,73 @@ class TestReporter(unittest.TestCase):
             report_path = reporter.generate_full_report(stats, [model], date_str="2024-01-01")
             content = Path(report_path).read_text(encoding="utf-8")
 
+        # Default language is German
         self.assertIn("**Was ist neu?**\n\n- Changed dataset\n- New objective", content)
         self.assertIn("**Warum relevant?**\n\n- Better accuracy\n- More stable", content)
-        self.assertIn("**Use cases**\n\n- Text completion\n- QA", content)
+        self.assertIn("**Anwendungsfälle**\n\n- Text completion\n- QA", content)
         self.assertNotIn("Confidence:", content)
         self.assertNotIn("Unknowns:", content)
+
+    def test_english_report_generation(self):
+        """Test report generation with English language."""
+        stats = RunStats()
+        model = {
+            "id": "author/sample_model",
+            "name": "sample_model",
+            "namespace": "author",
+            "llm_analysis": {
+                "specialist_score": 7,
+                "delta": {
+                    "what_changed": ["Changed dataset"],
+                    "why_it_matters": ["Better accuracy"],
+                },
+                "manufacturing": {"use_cases": ["Text completion"]},
+            },
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            reporter = Reporter(output_dir=tmpdir)
+            report_path = reporter.generate_full_report(
+                stats, [model], date_str="2024-01-01", language="en"
+            )
+            content = Path(report_path).read_text(encoding="utf-8")
+
+        self.assertIn("## Summary", content)
+        self.assertIn("**What's new?**", content)
+        self.assertIn("**Why it matters?**", content)
+        self.assertIn("**Use cases**", content)
+
+    def test_normal_report_hides_debug_sections(self):
+        """Test that normal report type hides debug sections."""
+        stats = RunStats()
+        stats.record_skip("test/model", "skip:test_reason", author="test")
+        stats.record_warn("test/model", "warn:test_reason", author="test")
+        
+        model = {
+            "id": "author/sample_model",
+            "name": "sample_model",
+            "namespace": "author",
+            "llm_analysis": {"specialist_score": 7},
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            reporter = Reporter(output_dir=tmpdir)
+            
+            # Debug report should include skip/warn sections
+            debug_path = reporter.generate_full_report(
+                stats, [model], date_str="2024-01-01", report_type="debug"
+            )
+            debug_content = Path(debug_path).read_text(encoding="utf-8")
+            self.assertIn("Top Skip", debug_content)
+            self.assertIn("Top Warnung", debug_content)
+            
+            # Normal report should NOT include skip/warn sections
+            normal_path = reporter.generate_full_report(
+                stats, [model], date_str="2024-01-01", report_type="normal"
+            )
+            normal_content = Path(normal_path).read_text(encoding="utf-8")
+            self.assertNotIn("Top Skip", normal_content)
+            self.assertNotIn("Top Warnung", normal_content)
 
     def test_format_params_b_boundaries(self):
         cases = {
