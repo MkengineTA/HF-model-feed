@@ -72,6 +72,28 @@ class TestSubscriberConfig(unittest.TestCase):
         subscribers = _parse_subscribers_json(json_str)
         self.assertEqual(len(subscribers), 0)
 
+    def test_parse_window_hours_exceeds_max(self):
+        """Window hours exceeding MAX_WINDOW_HOURS defaults to 24."""
+        from config import MAX_WINDOW_HOURS
+        
+        # Test default_window_hours exceeding max
+        json_str = f'[{{"email": "test@example.com", "default_window_hours": {MAX_WINDOW_HOURS + 1}}}]'
+        subscribers = _parse_subscribers_json(json_str)
+        self.assertEqual(len(subscribers), 1)
+        self.assertEqual(subscribers[0].default_window_hours, 24)  # Falls back to 24
+        
+    def test_parse_window_hours_by_day_exceeds_max(self):
+        """Day-specific window hours exceeding MAX_WINDOW_HOURS are skipped."""
+        from config import MAX_WINDOW_HOURS
+        
+        # Test window_hours_by_day with value exceeding max
+        json_str = f'[{{"email": "test@example.com", "window_hours_by_day": {{"mon": {MAX_WINDOW_HOURS + 1}, "wed": 48}}}}]'
+        subscribers = _parse_subscribers_json(json_str)
+        self.assertEqual(len(subscribers), 1)
+        # Mon should be skipped, Wed should be kept
+        self.assertNotIn("mon", subscribers[0].window_hours_by_day)
+        self.assertEqual(subscribers[0].window_hours_by_day.get("wed"), 48)
+
 
 class TestSubscriberWindowHours(unittest.TestCase):
     """Tests for window hours per day."""
@@ -264,18 +286,27 @@ class TestDatabaseProcessedAt(unittest.TestCase):
 class TestLegacyFallback(unittest.TestCase):
     """Tests for backward compatibility with single-recipient config."""
 
-    @patch.dict(os.environ, {"NEWSLETTER_SUBSCRIBERS_JSON": "", "RECEIVER_MAIL": "legacy@example.com"})
-    @patch('config.RECEIVER_MAIL', "legacy@example.com")
     def test_fallback_to_receiver_mail(self):
         """When no JSON config, falls back to RECEIVER_MAIL."""
-        # Need to reload config to pick up patched values
-        subscribers = get_newsletter_subscribers()
+        # Use _parse_subscribers_json directly with empty input to simulate no JSON config
+        from config import _parse_subscribers_json, NewsletterSubscriber
         
-        # If RECEIVER_MAIL is set and no JSON, should get legacy subscriber
-        # Note: This test depends on actual env vars at runtime
-        # In practice, the config is loaded at module import time
-        # Validate the result when RECEIVER_MAIL is configured
-        self.assertIsInstance(subscribers, list)
+        # Empty JSON returns empty list
+        result = _parse_subscribers_json("")
+        self.assertEqual(result, [])
+        
+        # Test that get_newsletter_subscribers returns legacy subscriber when
+        # RECEIVER_MAIL is set and no JSON config is present
+        with patch.dict(os.environ, {"NEWSLETTER_SUBSCRIBERS_JSON": ""}, clear=False):
+            with patch('config.RECEIVER_MAIL', "legacy@example.com"):
+                with patch('config._parse_subscribers_json', return_value=[]):
+                    subscribers = get_newsletter_subscribers()
+                    
+                    self.assertEqual(len(subscribers), 1)
+                    self.assertIsInstance(subscribers[0], NewsletterSubscriber)
+                    self.assertEqual(subscribers[0].email, "legacy@example.com")
+                    self.assertEqual(subscribers[0].type, "debug")  # Legacy uses debug type
+                    self.assertEqual(subscribers[0].language, "de")  # Legacy uses German
 
 
 class TestProcessedAtFormat(unittest.TestCase):

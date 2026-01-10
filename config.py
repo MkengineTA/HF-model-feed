@@ -192,6 +192,9 @@ SUPPORTED_RECIPIENT_TYPES = {"normal", "debug"}
 # Valid send days
 VALID_SEND_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
+# Maximum allowed window hours (30 days) to prevent misconfiguration
+MAX_WINDOW_HOURS = 720
+
 
 @dataclass
 class NewsletterSubscriber:
@@ -257,6 +260,9 @@ def _parse_subscribers_json(json_str: str | None) -> List[NewsletterSubscriber]:
             if not isinstance(default_window_hours, int) or default_window_hours < 1:
                 logger.warning(f"Subscriber {email}: invalid default_window_hours; using 24.")
                 default_window_hours = 24
+            elif default_window_hours > MAX_WINDOW_HOURS:
+                logger.warning(f"Subscriber {email}: default_window_hours {default_window_hours} exceeds max ({MAX_WINDOW_HOURS}); using 24.")
+                default_window_hours = 24
             
             # Validate window_hours_by_day
             window_hours_by_day_raw = item.get("window_hours_by_day", {})
@@ -271,6 +277,9 @@ def _parse_subscribers_json(json_str: str | None) -> List[NewsletterSubscriber]:
                     continue
                 if not isinstance(hours, int) or hours < 1:
                     logger.warning(f"Subscriber {email}: invalid hours for day '{day}'; skipping.")
+                    continue
+                if hours > MAX_WINDOW_HOURS:
+                    logger.warning(f"Subscriber {email}: hours for day '{day}' exceeds max ({MAX_WINDOW_HOURS}); skipping.")
                     continue
                 window_hours_by_day[day_lower] = hours
             
