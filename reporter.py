@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List, Literal
 from collections import Counter
 import csv
+import logging
 import os
 import math
 
 import config
 from run_stats import RunStats
+
+logger = logging.getLogger("EdgeAIScout")
 
 # Localization string table for report headings
 LOCALIZED_STRINGS: Dict[str, Dict[str, str]] = {
@@ -207,9 +210,13 @@ def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> An
     - Legacy: "string" or ["list", "items"] -> returned as-is
     - Bilingual: {"de": ..., "en": ...} -> returns value for lang
     
-    If value is a dict with language keys ("de" or "en"), return the value for lang.
-    If lang is not present, try fallback_lang.
-    If neither, return the value as-is (legacy format).
+    Fallback order for bilingual dicts:
+    1. Return value[lang] if present
+    2. Return value[fallback_lang] if present
+    3. Try fixed preference order: "en" then "de"
+    4. Return first available value (last resort)
+    
+    A debug log is emitted when neither the requested nor fallback language exists.
     
     Note: This function does NOT recursively process nested structures.
     Nested bilingual fields (e.g., within delta.what_changed) must be
@@ -220,11 +227,21 @@ def _get_bilingual_value(value: Any, lang: str, fallback_lang: str = "de") -> An
     
     # Check if it's a bilingual dict (has language keys)
     if isinstance(value, dict) and ("de" in value or "en" in value):
+        # 1. Try requested language
         if lang in value:
             return value[lang]
+        # 2. Try fallback language
         if fallback_lang in value:
             return value[fallback_lang]
-        # Return first available
+        # 3. Try fixed preference order: en, de
+        logger.debug(
+            f"Bilingual field missing both '{lang}' and '{fallback_lang}'; "
+            f"available keys: {list(value.keys())}"
+        )
+        for preferred in ("en", "de"):
+            if preferred in value:
+                return value[preferred]
+        # 4. Last resort: return first available value
         for v in value.values():
             return v
     
