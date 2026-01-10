@@ -5,7 +5,7 @@ import json
 import os
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Literal, Any
+from typing import List, Dict, Literal
 
 from dotenv import load_dotenv
 

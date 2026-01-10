@@ -12,22 +12,26 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore
 
-import config
-from config import NewsletterSubscriber, get_newsletter_subscribers
+from config import (
+    NewsletterSubscriber,
+    get_newsletter_subscribers,
+    NEWSLETTER_TIMEZONE,
+    MIN_SPECIALIST_SCORE,
+    EXCLUDE_REVIEW_REQUIRED,
+)
 from database import Database
 from reporter import Reporter
 from mailer import Mailer
 from run_stats import RunStats
 
-if TYPE_CHECKING:
-    from pathlib import Path
+
 
 logger = logging.getLogger("EdgeAIScout")
 
@@ -129,7 +133,7 @@ def dispatch_digests(
         logger.info("No newsletter subscribers configured.")
         return 0
     
-    tz_name = config.NEWSLETTER_TIMEZONE
+    tz_name = NEWSLETTER_TIMEZONE
     today_subscribers = get_subscribers_for_today(subscribers, tz_name)
     
     if not today_subscribers:
@@ -159,8 +163,8 @@ def dispatch_digests(
             # Query DB for models in window
             models = db.get_models_by_processed_window(
                 window_hours=window_hours,
-                min_specialist_score=config.MIN_SPECIALIST_SCORE,
-                exclude_review_required=config.EXCLUDE_REVIEW_REQUIRED,
+                min_specialist_score=MIN_SPECIALIST_SCORE,
+                exclude_review_required=EXCLUDE_REVIEW_REQUIRED,
             )
             logger.info(f"Queried {len(models)} models from DB for {window_hours}h window.")
         

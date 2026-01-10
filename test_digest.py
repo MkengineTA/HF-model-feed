@@ -1,8 +1,8 @@
 # test_digest.py
 """Tests for multi-recipient digest scheduling and dispatch."""
 import unittest
-from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
+from datetime import datetime, timezone
 import tempfile
 import os
 
@@ -10,12 +10,10 @@ import dateutil.parser
 
 from config import NewsletterSubscriber, get_newsletter_subscribers, _parse_subscribers_json
 from digest import (
-    get_current_day_name,
     get_subscribers_for_today,
     group_subscribers,
 )
 from database import Database
-from run_stats import RunStats
 
 
 class TestSubscriberConfig(unittest.TestCase):
@@ -276,8 +274,8 @@ class TestLegacyFallback(unittest.TestCase):
         # If RECEIVER_MAIL is set and no JSON, should get legacy subscriber
         # Note: This test depends on actual env vars at runtime
         # In practice, the config is loaded at module import time
-        # So we test the parsing logic instead
-        pass
+        # Validate the result when RECEIVER_MAIL is configured
+        self.assertIsInstance(subscribers, list)
 
 
 class TestProcessedAtFormat(unittest.TestCase):
