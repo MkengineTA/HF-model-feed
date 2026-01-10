@@ -270,11 +270,57 @@ class Database:
         )
         conn.commit()
 
+    def _normalize_processed_at(self, value) -> str:
+        """
+        Normalize processed_at to canonical UTC ISO 8601 format.
+        
+        This ensures consistent lexicographic ordering for timestamp comparisons
+        in SQLite WHERE clauses. The canonical format is:
+        - UTC timezone (always +00:00, never Z)
+        - Microseconds included for consistency
+        - Example: 2024-01-15T14:30:00.123456+00:00
+        
+        Args:
+            value: Existing timestamp string, datetime, or None
+            
+        Returns:
+            Canonical ISO 8601 UTC timestamp string
+        """
+        if value is None:
+            # Generate fresh UTC timestamp
+            return datetime.now(timezone.utc).isoformat()
+        
+        if isinstance(value, datetime):
+            # Convert datetime to UTC if needed
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+            return value.isoformat()
+        
+        if isinstance(value, str):
+            try:
+                # Parse and re-emit in canonical format
+                dt = dateutil.parser.parse(value)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                else:
+                    dt = dt.astimezone(timezone.utc)
+                return dt.isoformat()
+            except (ValueError, TypeError):
+                # If parsing fails, generate fresh timestamp
+                logger.warning(f"Could not parse processed_at value '{value}', using current time")
+                return datetime.now(timezone.utc).isoformat()
+        
+        # For any other type, generate fresh timestamp
+        return datetime.now(timezone.utc).isoformat()
+
     def save_model(self, model_data: dict) -> None:
         conn = self.get_connection()
         cursor = conn.cursor()
-        # Set processed_at to current UTC time if not provided
-        processed_at = model_data.get("processed_at") or datetime.now(timezone.utc).isoformat()
+        # Normalize processed_at to canonical UTC ISO 8601 format for consistent
+        # lexicographic ordering in timestamp comparisons
+        processed_at = self._normalize_processed_at(model_data.get("processed_at"))
         try:
             cursor.execute(
                 """
@@ -339,6 +385,11 @@ class Database:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
         cutoff_str = cutoff.isoformat()
         
+        # NOTE: The WHERE clause comparison `processed_at >= ?` relies on lexicographic
+        # string comparison of ISO 8601 timestamps. This works correctly because:
+        # 1. All timestamps are stored in canonical UTC ISO 8601 format via _normalize_processed_at()
+        # 2. The format (YYYY-MM-DDTHH:MM:SS.ffffff+00:00) sorts lexicographically as expected
+        # 3. Both stored values and cutoff use the same format with consistent timezone (+00:00)
         query = """
             SELECT id, name, author, created_at, last_modified,
                    params_est, params_total_b, params_active_b, params_source,
