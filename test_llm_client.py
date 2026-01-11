@@ -293,6 +293,41 @@ class TestLLMClientBackoff(unittest.TestCase):
     
     @patch('llm_client.requests.post')
     @patch('llm_client.time.sleep')
+    @patch('llm_client.datetime')
+    def test_rate_limit_with_http_date_retry_after(self, mock_datetime, mock_sleep, mock_post):
+        """Test that 429 with HTTP-date format Retry-After header works correctly."""
+        from datetime import datetime, timezone, timedelta
+        
+        # Mock current time
+        now = datetime(2026, 1, 11, 12, 0, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = now
+        
+        # Set Retry-After to 30 seconds in the future using HTTP-date format
+        retry_time = now + timedelta(seconds=30)
+        retry_after_str = retry_time.strftime('%a, %d %b %Y %H:%M:%S GMT')
+        
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {'Retry-After': retry_after_str}
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        
+        mock_post.side_effect = [mock_response_429, mock_response_200]
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_200)
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+        
+        # Check that sleep was called with approximately 30 seconds + buffer
+        sleep_time = mock_sleep.call_args[0][0]
+        self.assertGreater(sleep_time, 30)
+        self.assertLess(sleep_time, 36)  # 30 + max buffer of 5 + margin
+    
+    @patch('llm_client.requests.post')
+    @patch('llm_client.time.sleep')
     def test_mixed_429_and_5xx_errors(self, mock_sleep, mock_post):
         """Test that 429 and 5xx errors use separate counters."""
         mock_response_429 = MagicMock()

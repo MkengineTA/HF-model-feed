@@ -8,6 +8,8 @@ import random
 import time
 import requests
 import unicodedata
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
 import config
@@ -215,15 +217,26 @@ class LLMClient:
                             # Add small buffer
                             wait_time += random.uniform(1, 5)
                         except ValueError:
-                            # If it's a date string (HTTP-date format) or invalid,
-                            # fall back to exponential backoff and log the parsing failure
-                            logger.warning(
-                                f"Failed to parse Retry-After header value '{retry_after}' as seconds; "
-                                "falling back to exponential backoff."
-                            )
-                            wait_time = min(base_wait_time * (2 ** (rate_limit_attempt - 1)), max_wait_time)
-                            # Add jitter
-                            wait_time += random.uniform(0, wait_time * 0.1)
+                            # Try parsing as HTTP-date format
+                            try:
+                                retry_date = parsedate_to_datetime(retry_after)
+                                # Calculate delay from current time
+                                now = datetime.now(timezone.utc)
+                                wait_time = (retry_date - now).total_seconds()
+                                # Ensure wait_time is positive
+                                if wait_time < 0:
+                                    wait_time = 0
+                                # Add small buffer
+                                wait_time += random.uniform(1, 5)
+                            except (ValueError, TypeError):
+                                # If both numeric and date parsing fail, fall back to exponential backoff
+                                logger.warning(
+                                    f"Failed to parse Retry-After header value '{retry_after}' as seconds or HTTP-date; "
+                                    "falling back to exponential backoff."
+                                )
+                                wait_time = min(base_wait_time * (2 ** (rate_limit_attempt - 1)), max_wait_time)
+                                # Add jitter
+                                wait_time += random.uniform(0, wait_time * 0.1)
                     else:
                         # Exponential backoff with jitter
                         wait_time = min(base_wait_time * (2 ** (rate_limit_attempt - 1)), max_wait_time)
