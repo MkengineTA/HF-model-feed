@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import MagicMock, patch
-import time
 import requests
 
 from llm_client import LLMClient
