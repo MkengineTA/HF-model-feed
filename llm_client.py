@@ -210,8 +210,8 @@ class LLMClient:
                     
                     if retry_after:
                         try:
-                            # Retry-After can be in seconds (integer) or HTTP-date
-                            wait_time = int(retry_after)
+                            # Retry-After can be in seconds (integer or float) or HTTP-date
+                            wait_time = float(retry_after)
                             # Add small buffer
                             wait_time += random.uniform(1, 5)
                         except ValueError:
@@ -362,7 +362,6 @@ class LLMClient:
 
         try:
             response = self._request_with_backoff(payload, headers)
-            response.raise_for_status()
             content = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
             analysis = extract_json_from_text(content)
             if not analysis:

@@ -111,8 +111,11 @@ class TestLLMClientBackoff(unittest.TestCase):
         mock_response_200 = MagicMock()
         mock_response_200.status_code = 200
         
-        # Create enough 429s to trigger the cap (2^n > 3600)
-        # After 8 attempts: 10 * 2^7 = 1280s, after 9: 2560s, after 10: 5120s > 3600
+        # Create enough 429s to trigger the cap
+        # Exponential backoff: 10 * 2^(attempt-1)
+        # After attempt 8: 10 * 2^7 = 1280s
+        # After attempt 9: 10 * 2^8 = 2560s
+        # After attempt 10: 10 * 2^9 = 5120s > 3600 (capped)
         mock_post.side_effect = [mock_response_429] * 10 + [mock_response_200]
         
         result = self.client._request_with_backoff(self.payload, self.headers)
@@ -122,9 +125,14 @@ class TestLLMClientBackoff(unittest.TestCase):
         # Check that later sleep calls are capped at 3600s
         sleep_calls = [call_args[0][0] for call_args in mock_sleep.call_args_list]
         
-        # The last few should be capped at 3600 + jitter
+        # Constants from implementation
+        max_wait_time = 3600
+        jitter_factor = 0.1
+        margin = 1  # Small margin for floating point comparison
+        
+        # The last few should be capped at max_wait_time + jitter
         for sleep_time in sleep_calls[-3:]:
-            self.assertLessEqual(sleep_time, 3600 * 1.1 + 1)  # Cap + 10% jitter + margin
+            self.assertLessEqual(sleep_time, max_wait_time * (1 + jitter_factor) + margin)
     
     @patch('llm_client.requests.post')
     @patch('llm_client.time.sleep')
