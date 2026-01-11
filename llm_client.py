@@ -210,12 +210,14 @@ class LLMClient:
                     
                     if retry_after:
                         try:
-                            # Retry-After can be in seconds (integer or float) or HTTP-date
+                            # Retry-After can be in seconds (integer or float)
+                            # Try parsing as numeric value first
                             wait_time = float(retry_after)
                             # Add small buffer
                             wait_time += random.uniform(1, 5)
                         except ValueError:
-                            # If it's a date string, fall back to exponential backoff
+                            # If it's a date string (HTTP-date format) or invalid,
+                            # fall back to exponential backoff
                             wait_time = min(base_wait_time * (2 ** (attempt - 1)), max_wait_time)
                             # Add jitter
                             wait_time += random.uniform(0, wait_time * 0.1)

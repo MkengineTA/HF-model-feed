@@ -112,10 +112,10 @@ class TestLLMClientBackoff(unittest.TestCase):
         mock_response_200.status_code = 200
         
         # Create enough 429s to trigger the cap
-        # Exponential backoff: 10 * 2^(attempt-1)
-        # After attempt 8: 10 * 2^7 = 1280s
-        # After attempt 9: 10 * 2^8 = 2560s
-        # After attempt 10: 10 * 2^9 = 5120s > 3600 (capped)
+        # Exponential backoff: 10 * 2^(attempt-1) + jitter
+        # After attempt 8: 10 * 2^7 = 1280s + jitter
+        # After attempt 9: 10 * 2^8 = 2560s + jitter
+        # After attempt 10: 10 * 2^9 = 5120s, capped to 3600s + jitter
         mock_post.side_effect = [mock_response_429] * 10 + [mock_response_200]
         
         result = self.client._request_with_backoff(self.payload, self.headers)
