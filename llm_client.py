@@ -180,7 +180,7 @@ class LLMClient:
         Make an API request with robust retry logic.
         
         - For 429 (rate limit) errors: retry indefinitely with exponential backoff
-        - For 5xx (server) errors: retry up to 10 times
+        - For 5xx (server) errors: make up to 10 total attempts
         - For other errors: raise immediately
         
         Returns the successful response object.
