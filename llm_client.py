@@ -199,8 +199,8 @@ class LLMClient:
             try:
                 response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
                 
-                # Success - return the response
-                if response.status_code == 200:
+                # Success - return the response for any 2xx status code
+                if 200 <= response.status_code < 300:
                     return response
                 
                 # Rate limit (429) - wait and retry indefinitely
