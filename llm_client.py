@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import random
+import time
 import requests
 import unicodedata
 from typing import Any, Dict, List, Optional
@@ -173,6 +175,87 @@ class LLMClient:
         self.app_name = app_name
         self.enable_reasoning = enable_reasoning
 
+    def _request_with_backoff(self, payload: dict, headers: dict) -> requests.Response:
+        """
+        Make an API request with robust retry logic.
+        
+        - For 429 (rate limit) errors: retry indefinitely with exponential backoff
+        - For 5xx (server) errors: retry up to 10 times
+        - For other errors: raise immediately
+        
+        Returns the successful response object.
+        Raises an exception if unrecoverable error or max retries exceeded.
+        """
+        base_wait_time = 10  # Initial wait time in seconds
+        max_wait_time = 3600  # Maximum wait time per sleep cycle (1 hour)
+        max_5xx_retries = 10
+        
+        attempt = 0
+        server_error_count = 0
+        
+        while True:
+            attempt += 1
+            
+            try:
+                response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
+                
+                # Success - return the response
+                if response.status_code == 200:
+                    return response
+                
+                # Rate limit (429) - wait and retry indefinitely
+                if response.status_code == 429:
+                    # Check for Retry-After header
+                    retry_after = response.headers.get('Retry-After')
+                    
+                    if retry_after:
+                        try:
+                            # Retry-After can be in seconds (integer) or HTTP-date
+                            wait_time = int(retry_after)
+                            # Add small buffer
+                            wait_time += random.uniform(1, 5)
+                        except ValueError:
+                            # If it's a date string, fall back to exponential backoff
+                            wait_time = min(base_wait_time * (2 ** (attempt - 1)), max_wait_time)
+                            # Add jitter
+                            wait_time += random.uniform(0, wait_time * 0.1)
+                    else:
+                        # Exponential backoff with jitter
+                        wait_time = min(base_wait_time * (2 ** (attempt - 1)), max_wait_time)
+                        # Add jitter to avoid thundering herd
+                        wait_time += random.uniform(0, wait_time * 0.1)
+                    
+                    logger.warning(f"Rate limit hit (429). Sleeping for {wait_time:.1f}s before retry (attempt {attempt})...")
+                    time.sleep(wait_time)
+                    continue
+                
+                # Server errors (5xx) - limited retry
+                if 500 <= response.status_code < 600:
+                    server_error_count += 1
+                    
+                    if server_error_count >= max_5xx_retries:
+                        logger.error(f"Server error {response.status_code} persisted after {max_5xx_retries} retries. Giving up.")
+                        response.raise_for_status()
+                    
+                    # Exponential backoff for server errors
+                    wait_time = min(base_wait_time * (2 ** (server_error_count - 1)), max_wait_time)
+                    wait_time += random.uniform(0, wait_time * 0.1)
+                    
+                    logger.warning(f"Server error {response.status_code}. Sleeping for {wait_time:.1f}s before retry ({server_error_count}/{max_5xx_retries})...")
+                    time.sleep(wait_time)
+                    continue
+                
+                # Other errors (4xx except 429, etc.) - raise immediately
+                response.raise_for_status()
+                
+            except requests.exceptions.Timeout as e:
+                logger.error(f"Request timeout: {e}")
+                raise
+            except requests.exceptions.RequestException as e:
+                # Connection errors, etc.
+                logger.error(f"Request error: {e}")
+                raise
+
     def analyze_model(self, readme_content: str, tags: list[str], yaml_meta: dict | None = None, file_summary: list[dict] | None = None) -> Optional[dict]:
         files_ctx = "Unknown"
         if file_summary:
@@ -278,7 +361,7 @@ class LLMClient:
             headers["X-Title"] = self.app_name
 
         try:
-            response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
+            response = self._request_with_backoff(payload, headers)
             response.raise_for_status()
             content = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
             analysis = extract_json_from_text(content)
