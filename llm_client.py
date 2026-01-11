@@ -190,12 +190,10 @@ class LLMClient:
         max_wait_time = 3600  # Maximum wait time per sleep cycle (1 hour)
         max_5xx_retries = 10
         
-        attempt = 0
-        server_error_count = 0
+        rate_limit_attempt = 0  # Counter for 429 retries only
+        server_error_count = 0  # Counter for 5xx retries only
         
         while True:
-            attempt += 1
-            
             try:
                 response = requests.post(self.api_url, json=payload, headers=headers, timeout=120)
                 
@@ -205,6 +203,7 @@ class LLMClient:
                 
                 # Rate limit (429) - wait and retry indefinitely
                 if response.status_code == 429:
+                    rate_limit_attempt += 1
                     # Check for Retry-After header
                     retry_after = response.headers.get('Retry-After')
                     
@@ -222,16 +221,16 @@ class LLMClient:
                                 f"Failed to parse Retry-After header value '{retry_after}' as seconds; "
                                 "falling back to exponential backoff."
                             )
-                            wait_time = min(base_wait_time * (2 ** (attempt - 1)), max_wait_time)
+                            wait_time = min(base_wait_time * (2 ** (rate_limit_attempt - 1)), max_wait_time)
                             # Add jitter
                             wait_time += random.uniform(0, wait_time * 0.1)
                     else:
                         # Exponential backoff with jitter
-                        wait_time = min(base_wait_time * (2 ** (attempt - 1)), max_wait_time)
+                        wait_time = min(base_wait_time * (2 ** (rate_limit_attempt - 1)), max_wait_time)
                         # Add jitter to avoid thundering herd
                         wait_time += random.uniform(0, wait_time * 0.1)
                     
-                    logger.warning(f"Rate limit hit (429). Sleeping for {wait_time:.1f}s before retry (attempt {attempt})...")
+                    logger.warning(f"Rate limit hit (429). Sleeping for {wait_time:.1f}s before retry (attempt {rate_limit_attempt})...")
                     time.sleep(wait_time)
                     continue
                 

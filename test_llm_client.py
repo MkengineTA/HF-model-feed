@@ -210,6 +210,134 @@ class TestLLMClientBackoff(unittest.TestCase):
             self.client._request_with_backoff(self.payload, self.headers)
         
         self.assertEqual(mock_post.call_count, 1)
+    
+    @patch('llm_client.requests.post')
+    @patch('llm_client.time.sleep')
+    def test_successful_2xx_status_codes(self, mock_sleep, mock_post):
+        """Test that non-200 2xx status codes are handled as successful."""
+        # Test 201 Created
+        mock_response_201 = MagicMock()
+        mock_response_201.status_code = 201
+        mock_post.return_value = mock_response_201
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_201)
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_sleep.call_count, 0)
+        
+        # Test 204 No Content
+        mock_response_204 = MagicMock()
+        mock_response_204.status_code = 204
+        mock_post.return_value = mock_response_204
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_204)
+        self.assertEqual(mock_post.call_count, 2)  # Total calls
+        self.assertEqual(mock_sleep.call_count, 0)
+    
+    @patch('llm_client.requests.post')
+    @patch('llm_client.time.sleep')
+    def test_rate_limit_with_float_retry_after(self, mock_sleep, mock_post):
+        """Test that 429 with float Retry-After header works correctly."""
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {'Retry-After': '15.5'}
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        
+        mock_post.side_effect = [mock_response_429, mock_response_200]
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_200)
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+        
+        # Check that sleep was called with approximately 15.5 seconds + buffer
+        sleep_time = mock_sleep.call_args[0][0]
+        self.assertGreater(sleep_time, 15.5)
+        self.assertLess(sleep_time, 21.5)  # 15.5 + max buffer of 5 + margin
+    
+    @patch('llm_client.requests.post')
+    @patch('llm_client.time.sleep')
+    @patch('llm_client.logger')
+    def test_rate_limit_with_invalid_retry_after(self, mock_logger, mock_sleep, mock_post):
+        """Test fallback behavior when Retry-After contains invalid value."""
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {'Retry-After': 'invalid-value'}
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        
+        mock_post.side_effect = [mock_response_429, mock_response_200]
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_200)
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+        
+        # Verify warning was logged about parsing failure
+        warning_calls = [call for call in mock_logger.warning.call_args_list 
+                        if 'Failed to parse Retry-After' in str(call)]
+        self.assertGreater(len(warning_calls), 0)
+        
+        # Should fall back to exponential backoff (~10s for first attempt)
+        sleep_time = mock_sleep.call_args[0][0]
+        self.assertGreater(sleep_time, 9)
+        self.assertLess(sleep_time, 12)
+    
+    @patch('llm_client.requests.post')
+    @patch('llm_client.time.sleep')
+    def test_mixed_429_and_5xx_errors(self, mock_sleep, mock_post):
+        """Test that 429 and 5xx errors use separate counters."""
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {}
+        
+        mock_response_500 = MagicMock()
+        mock_response_500.status_code = 500
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        
+        # Sequence: 429, 500, 429, 500, success
+        mock_post.side_effect = [
+            mock_response_429,
+            mock_response_500,
+            mock_response_429,
+            mock_response_500,
+            mock_response_200
+        ]
+        
+        result = self.client._request_with_backoff(self.payload, self.headers)
+        
+        self.assertEqual(result, mock_response_200)
+        self.assertEqual(mock_post.call_count, 5)
+        self.assertEqual(mock_sleep.call_count, 4)
+        
+        # Verify that backoff calculations use separate counters
+        sleep_times = [call_args[0][0] for call_args in mock_sleep.call_args_list]
+        
+        # First 429 should use attempt 1: ~10s
+        self.assertGreater(sleep_times[0], 9)
+        self.assertLess(sleep_times[0], 12)
+        
+        # First 500 should also use attempt 1: ~10s
+        self.assertGreater(sleep_times[1], 9)
+        self.assertLess(sleep_times[1], 12)
+        
+        # Second 429 should use attempt 2: ~20s
+        self.assertGreater(sleep_times[2], 18)
+        self.assertLess(sleep_times[2], 24)
+        
+        # Second 500 should use attempt 2: ~20s
+        self.assertGreater(sleep_times[3], 18)
+        self.assertLess(sleep_times[3], 24)
 
 
 class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
