@@ -378,6 +378,15 @@ class TestLLMClientBackoff(unittest.TestCase):
 class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
     """Integration tests for analyze_model using _request_with_backoff."""
     
+    # Shared mock response for test methods
+    MOCK_SUCCESS_RESPONSE = {
+        "choices": [{
+            "message": {
+                "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
+            }
+        }]
+    }
+    
     @patch('llm_client.requests.post')
     @patch('llm_client.time.sleep')
     def test_analyze_model_with_rate_limit_recovery(self, mock_sleep, mock_post):
@@ -389,13 +398,7 @@ class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
         
         mock_response_200 = MagicMock()
         mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
-                }
-            }]
-        }
+        mock_response_200.json.return_value = self.MOCK_SUCCESS_RESPONSE
         
         mock_post.side_effect = [mock_response_429, mock_response_200]
         
@@ -417,13 +420,7 @@ class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
         """Test that reasoning effort parameter is included in payload when reasoning is enabled."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
-                }
-            }]
-        }
+        mock_response.json.return_value = self.MOCK_SUCCESS_RESPONSE
         mock_post.return_value = mock_response
         
         client = LLMClient(
@@ -451,13 +448,7 @@ class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
         """Test that reasoning effort defaults to 'medium' when not specified."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
-                }
-            }]
-        }
+        mock_response.json.return_value = self.MOCK_SUCCESS_RESPONSE
         mock_post.return_value = mock_response
         
         client = LLMClient(
@@ -484,13 +475,7 @@ class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
         """Test that reasoning is not included in payload when reasoning is disabled."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
-                }
-            }]
-        }
+        mock_response.json.return_value = self.MOCK_SUCCESS_RESPONSE
         mock_post.return_value = mock_response
         
         client = LLMClient(
