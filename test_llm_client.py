@@ -411,6 +411,105 @@ class TestLLMClientAnalyzeModelIntegration(unittest.TestCase):
         self.assertEqual(result.get("model_type"), "Base Model")
         self.assertEqual(mock_post.call_count, 2)
         self.assertEqual(mock_sleep.call_count, 1)
+    
+    @patch('llm_client.requests.post')
+    def test_reasoning_effort_parameter_included(self, mock_post):
+        """Test that reasoning effort parameter is included in payload when reasoning is enabled."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
+                }
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        client = LLMClient(
+            api_url="http://test.example.com/api",
+            model="test-model",
+            api_key="test-key",
+            enable_reasoning=True,
+            reasoning_effort="high"
+        )
+        
+        result = client.analyze_model("Test README", ["tag1"], yaml_meta={})
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_post.call_count, 1)
+        
+        # Verify the payload includes reasoning with effort
+        call_args = mock_post.call_args
+        payload = call_args[1]['json']
+        self.assertIn('reasoning', payload)
+        self.assertEqual(payload['reasoning']['enabled'], True)
+        self.assertEqual(payload['reasoning']['effort'], 'high')
+    
+    @patch('llm_client.requests.post')
+    def test_reasoning_effort_defaults_to_medium(self, mock_post):
+        """Test that reasoning effort defaults to 'medium' when not specified."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
+                }
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        client = LLMClient(
+            api_url="http://test.example.com/api",
+            model="test-model",
+            api_key="test-key",
+            enable_reasoning=True
+        )
+        
+        result = client.analyze_model("Test README", ["tag1"], yaml_meta={})
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_post.call_count, 1)
+        
+        # Verify the payload includes reasoning with default effort
+        call_args = mock_post.call_args
+        payload = call_args[1]['json']
+        self.assertIn('reasoning', payload)
+        self.assertEqual(payload['reasoning']['enabled'], True)
+        self.assertEqual(payload['reasoning']['effort'], 'medium')
+    
+    @patch('llm_client.requests.post')
+    def test_reasoning_not_included_when_disabled(self, mock_post):
+        """Test that reasoning is not included in payload when reasoning is disabled."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '```json\n{"model_type": "Base Model", "newsletter_blurb": {"de": "Test", "en": "Test"}, "key_facts": {"de": [], "en": []}, "delta": {"what_changed": {"de": [], "en": []}, "why_it_matters": {"de": [], "en": []}}, "manufacturing": {"use_cases": {"de": [], "en": []}}, "edge": {}, "specialist_score": 5, "confidence": "medium", "unknowns": []}\n```'
+                }
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        client = LLMClient(
+            api_url="http://test.example.com/api",
+            model="test-model",
+            api_key="test-key",
+            enable_reasoning=False,
+            reasoning_effort="high"
+        )
+        
+        result = client.analyze_model("Test README", ["tag1"], yaml_meta={})
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_post.call_count, 1)
+        
+        # Verify the payload does not include reasoning
+        call_args = mock_post.call_args
+        payload = call_args[1]['json']
+        self.assertNotIn('reasoning', payload)
 
 
 if __name__ == '__main__':
