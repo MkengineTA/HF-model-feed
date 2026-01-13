@@ -169,13 +169,14 @@ def normalize_llm_output(analysis: dict) -> dict:
     return analysis
 
 class LLMClient:
-    def __init__(self, api_url: str, model: str, api_key: str | None = None, site_url: str | None = None, app_name: str | None = None, enable_reasoning: bool = False):
+    def __init__(self, api_url: str, model: str, api_key: str | None = None, site_url: str | None = None, app_name: str | None = None, enable_reasoning: bool = False, reasoning_effort: str = "medium"):
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
         self.site_url = site_url
         self.app_name = app_name
         self.enable_reasoning = enable_reasoning
+        self.reasoning_effort = reasoning_effort
 
     def _request_with_backoff(self, payload: dict, headers: dict) -> requests.Response:
         """
@@ -368,7 +369,7 @@ class LLMClient:
         }
 
         if self.enable_reasoning:
-            payload["reasoning"] = {"enabled": True}
+            payload["reasoning"] = {"enabled": True, "effort": self.reasoning_effort}
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
