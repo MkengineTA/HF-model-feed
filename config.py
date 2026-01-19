@@ -76,6 +76,7 @@ BLACKLIST_NAMESPACES = {
     "ggml-org",
     "devquasar",
     "thireus",
+    "llm-course",
 }
 
 WHITELIST_NAMESPACES = {
