@@ -195,6 +195,7 @@ def main():
         site_url=config.OR_SITE_URL,
         app_name=config.OR_APP_NAME,
         enable_reasoning=config.LLM_ENABLE_REASONING,
+        reasoning_effort=config.LLM_REASONING_EFFORT,
     )
 
     reporter = Reporter()

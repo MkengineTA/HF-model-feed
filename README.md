@@ -80,6 +80,7 @@ The core analysis engine uses an LLM (Local or Cloud) acting as a "Strict Analys
 | `LLM_MODEL` | Model ID (e.g., `qwen/qwen-2.5-72b-instruct`). |
 | `LLM_API_KEY` | API Key for the LLM provider. |
 | `LLM_ENABLE_REASONING` | Set to `True` if using reasoning models (e.g., R1, o1). |
+| `LLM_REASONING_EFFORT` | Reasoning effort level for applicable models: `low`, `medium`, or `high` (default: `medium`). |
 | `SMTP_USER` | Gmail address for sending reports. |
 | `SMTP_PASS` | Gmail App Password (not your login password). |
 | `RECEIVER_MAIL` | Destination email address. |
